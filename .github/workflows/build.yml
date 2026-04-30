@@ -34,7 +34,7 @@ jobs:
           sudo apt-get update -q -y
           sudo apt-get install -q -y \
             build-essential autoconf automake libtool pkg-config \
-            libpng-dev libjpeg-dev libtiff-dev libwebp-dev libopenjp2-7-dev zlib1g-dev \
+            libpng-dev libjpeg-dev libtiff-dev zlib1g-dev \
             curl
 
       - name: Build leptonica + tesseract
@@ -77,7 +77,7 @@ jobs:
             quay.io/pypa/manylinux_2_28_x86_64 \
             /bin/bash -ec '
               yum install -y -q \
-                libpng-devel libjpeg-turbo-devel libtiff-devel libwebp-devel openjpeg2-devel zlib-devel \
+                libpng-devel libjpeg-turbo-devel libtiff-devel zlib-devel \
                 autoconf automake libtool pkgconfig curl
               PREFIX=/io/_legacy-prefix
               mkdir -p "$PREFIX"
@@ -127,7 +127,7 @@ jobs:
           sudo apt-get update -q -y
           sudo apt-get install -q -y \
             build-essential autoconf automake libtool pkg-config \
-            libpng-dev libjpeg-dev libtiff-dev libwebp-dev libopenjp2-7-dev zlib1g-dev \
+            libpng-dev libjpeg-dev libtiff-dev zlib1g-dev \
             curl
 
       - name: Build leptonica + tesseract
@@ -170,7 +170,7 @@ jobs:
             quay.io/pypa/manylinux_2_28_aarch64 \
             /bin/bash -ec '
               yum install -y -q \
-                libpng-devel libjpeg-turbo-devel libtiff-devel libwebp-devel openjpeg2-devel zlib-devel \
+                libpng-devel libjpeg-turbo-devel libtiff-devel zlib-devel \
                 autoconf automake libtool pkgconfig curl
               PREFIX=/io/_legacy-prefix
               mkdir -p "$PREFIX"
@@ -217,7 +217,7 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          brew install autoconf automake libtool pkg-config libpng jpeg libtiff webp openjpeg
+          brew install autoconf automake libtool pkg-config libpng jpeg libtiff
 
       - name: Build leptonica + tesseract
         run: |
@@ -253,7 +253,7 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          brew install autoconf automake libtool pkg-config libpng jpeg libtiff webp openjpeg
+          brew install autoconf automake libtool pkg-config libpng jpeg libtiff
 
       - name: Build leptonica + tesseract
         run: |

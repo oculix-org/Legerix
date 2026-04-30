@@ -21,11 +21,20 @@ tar xzf "leptonica-${VERSION}.tar.gz"
 cd "leptonica-${VERSION}"
 
 echo "==> Configuring leptonica"
+# Belt-and-suspenders: pass every --without-X for formats we don't need,
+# AND clear the matching pkg-config vars so a previously-installed webp /
+# openjpeg from Homebrew or apt can't sneak back in via auto-detect.
+LIBWEBP_LIBS="" LIBWEBP_CFLAGS="" \
+LIBWEBPMUX_LIBS="" LIBWEBPMUX_CFLAGS="" \
+LIBOPENJPEG_LIBS="" LIBOPENJPEG_CFLAGS="" \
+GIFLIB_LIBS="" GIFLIB_CFLAGS="" \
 ./configure \
     --prefix="$PREFIX" \
     --disable-static \
     --enable-shared \
     --without-libwebp \
+    --without-libwebpmux \
+    --without-giflib \
     --without-libopenjpeg \
     CFLAGS="-O2 -fPIC"
 
