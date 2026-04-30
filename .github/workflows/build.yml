@@ -200,8 +200,11 @@ jobs:
           path: out/
 
   # ----- macOS x86_64 -------------------------------------------------------
+  # Use macos-latest (same as Apertix) instead of pinning macos-13 explicitly:
+  # the macos-13 free-tier queue is now saturated, while macos-latest gets
+  # picked up immediately. Verified Intel-compatible by upstream Apertix.
   build_macos_x64:
-    runs-on: macos-13
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 
