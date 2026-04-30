@@ -47,7 +47,7 @@ jobs:
           cp -L "$PREFIX/lib/libleptonica.so.6" out/
           cp -L "$PREFIX/lib/libtesseract.so.5" out/
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: linux-x86-64
           path: out/
@@ -101,7 +101,7 @@ jobs:
             fi
           done
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: linux-x86-64-legacy
           path: out/
@@ -140,7 +140,7 @@ jobs:
           cp -L "$PREFIX/lib/libleptonica.so.6" out/
           cp -L "$PREFIX/lib/libtesseract.so.5" out/
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: linux-aarch64
           path: out/
@@ -194,7 +194,7 @@ jobs:
             fi
           done
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: linux-aarch64-legacy
           path: out/
@@ -229,7 +229,7 @@ jobs:
           cp -L "$PREFIX/lib/libleptonica.6.dylib" out/
           cp -L "$PREFIX/lib/libtesseract.5.dylib" out/
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: darwin
           path: out/
@@ -265,7 +265,7 @@ jobs:
           cp -L "$PREFIX/lib/libleptonica.6.dylib" out/
           cp -L "$PREFIX/lib/libtesseract.5.dylib" out/
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: darwin-aarch64
           path: out/
@@ -301,7 +301,7 @@ jobs:
           cp "$VCPKG_BIN"/leptonica-*.dll out/
           ls -la out/
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: win32-x86-64
           path: out/
@@ -375,7 +375,7 @@ jobs:
       - name: Build and test
         run: mvn -B install
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dist
           path: target/legerix*
