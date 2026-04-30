@@ -1,0 +1,54 @@
+Third-party software bundled in the Legerix Maven artifact
+==========================================================
+
+This file lists every third-party component packaged inside the Legerix jar
+and its license. Legerix itself is distributed under the MIT License (see
+LICENSE).
+
+------------------------------------------------------------------------
+1. Tesseract OCR
+------------------------------------------------------------------------
+
+   Source       : https://github.com/tesseract-ocr/tesseract
+   Version      : 5.5.0
+   Files        : libtesseract.so.5 (Linux x86_64 + aarch64, modern + legacy)
+                  libtesseract.5.dylib (macOS x86_64 + aarch64)
+                  tesseract55.dll (Windows x86_64)
+   License      : Apache License, Version 2.0
+   License URL  : https://www.apache.org/licenses/LICENSE-2.0
+   Copyright    : (c) 2006 Google Inc.
+                  (c) 1985-2007 Hewlett-Packard
+                  and other contributors
+
+------------------------------------------------------------------------
+2. Leptonica
+------------------------------------------------------------------------
+
+   Source       : https://github.com/DanBloomberg/leptonica
+   Version      : 1.85.0
+   Files        : libleptonica.so.6 (Linux x86_64 + aarch64, modern + legacy)
+                  libleptonica.6.dylib (macOS x86_64 + aarch64)
+                  leptonica-1.85.0.dll (Windows x86_64)
+   License      : BSD 2-Clause "Simplified" License
+   License URL  : https://opensource.org/licenses/BSD-2-Clause
+   Copyright    : (c) 2001-2025 Dan Bloomberg and contributors
+
+------------------------------------------------------------------------
+3. eng.traineddata (English fast model)
+------------------------------------------------------------------------
+
+   Source       : https://github.com/tesseract-ocr/tessdata_fast
+   Path in jar  : tessdata/eng.traineddata
+   License      : Apache License, Version 2.0
+   License URL  : https://www.apache.org/licenses/LICENSE-2.0
+   Copyright    : (c) 2017-2025 Google Inc. and Tesseract contributors
+
+------------------------------------------------------------------------
+4. JNA (compile + test scope, NOT bundled in jar)
+------------------------------------------------------------------------
+
+   Source       : https://github.com/java-native-access/jna
+   Version      : 5.14.0
+   License      : Apache License, Version 2.0 / LGPL 2.1 (dual)
+   Note         : Used at compile time and as a runtime dependency declared
+                  in the POM. Not embedded in the Legerix artifact.

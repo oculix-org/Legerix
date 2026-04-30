@@ -1,0 +1,32 @@
+# Maven
+target/
+*.versionsBackup
+dependency-reduced-pom.xml
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.project
+.classpath
+.settings/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local build outputs
+_prefix/
+_legacy-prefix/
+out/
+
+# Native artifacts staged in resources are produced by CI; keep the directories
+# (with .gitkeep) but ignore the built libraries themselves.
+src/main/resources/linux-x86-64/*.so*
+src/main/resources/linux-x86-64-legacy/*.so*
+src/main/resources/linux-aarch64/*.so*
+src/main/resources/linux-aarch64-legacy/*.so*
+src/main/resources/darwin/*.dylib
+src/main/resources/darwin-aarch64/*.dylib
+src/main/resources/win32-x86-64/*.dll
+src/main/resources/tessdata/*.traineddata

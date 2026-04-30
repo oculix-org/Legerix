@@ -1,0 +1,447 @@
+name: Build, Release and Publish Legerix
+# Modeled on julienmerconsulting/Apertix build-release-publish.yml.
+# 7-job matrix: linux x64 modern + legacy, linux aarch64 modern + legacy,
+# macOS x64, macOS aarch64, Windows x64. Final job assembles the fat jar
+# and deploys to Maven Central.
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  # ----- Linux x86_64 modern (Ubuntu 24.04, glibc >= 2.38) ------------------
+  build_linux_x64:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: 17
+          distribution: temurin
+
+      - name: Get Version Info
+        run: |
+          echo "POM_VERSION=$(mvn build-helper:parse-version org.apache.maven.plugins:maven-help-plugin:3.2.0:evaluate -Dexpression=project.version -q -DforceStdout)" >> $GITHUB_ENV
+          echo "TESSERACT_VERSION=$(mvn build-helper:parse-version org.apache.maven.plugins:maven-help-plugin:3.2.0:evaluate -Dexpression=tesseract.version.long -q -DforceStdout)" >> $GITHUB_ENV
+          echo "LEPTONICA_VERSION=$(mvn build-helper:parse-version org.apache.maven.plugins:maven-help-plugin:3.2.0:evaluate -Dexpression=leptonica.version -q -DforceStdout)" >> $GITHUB_ENV
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -q -y
+          sudo apt-get install -q -y \
+            build-essential autoconf automake libtool pkg-config \
+            libpng-dev libjpeg-dev libtiff-dev libwebp-dev libopenjp2-7-dev zlib1g-dev \
+            curl
+
+      - name: Build leptonica + tesseract
+        run: |
+          PREFIX="$RUNNER_TEMP/legerix-prefix"
+          mkdir -p "$PREFIX"
+          ./scripts/build-leptonica.sh "$LEPTONICA_VERSION" "$PREFIX"
+          ./scripts/build-tesseract.sh "$TESSERACT_VERSION" "$PREFIX"
+          mkdir -p out
+          cp -L "$PREFIX/lib/libleptonica.so.6" out/
+          cp -L "$PREFIX/lib/libtesseract.so.5" out/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-x86-64
+          path: out/
+
+  # ----- Linux x86_64 legacy (manylinux_2_28 container, glibc <= 2.28) ------
+  build_linux_x64_legacy:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: 17
+          distribution: temurin
+
+      - name: Get Version Info
+        run: |
+          echo "TESSERACT_VERSION=$(mvn build-helper:parse-version org.apache.maven.plugins:maven-help-plugin:3.2.0:evaluate -Dexpression=tesseract.version.long -q -DforceStdout)" >> $GITHUB_ENV
+          echo "LEPTONICA_VERSION=$(mvn build-helper:parse-version org.apache.maven.plugins:maven-help-plugin:3.2.0:evaluate -Dexpression=leptonica.version -q -DforceStdout)" >> $GITHUB_ENV
+
+      - name: Build in manylinux_2_28 (x86_64)
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/io -w /io \
+            -e TESSERACT_VERSION=${{ env.TESSERACT_VERSION }} \
+            -e LEPTONICA_VERSION=${{ env.LEPTONICA_VERSION }} \
+            quay.io/pypa/manylinux_2_28_x86_64 \
+            /bin/bash -ec '
+              yum install -y -q \
+                libpng-devel libjpeg-turbo-devel libtiff-devel libwebp-devel openjpeg2-devel zlib-devel \
+                autoconf automake libtool pkgconfig curl
+              PREFIX=/io/_legacy-prefix
+              mkdir -p "$PREFIX"
+              ./scripts/build-leptonica.sh "$LEPTONICA_VERSION" "$PREFIX"
+              ./scripts/build-tesseract.sh "$TESSERACT_VERSION" "$PREFIX"
+              mkdir -p out
+              cp -L "$PREFIX/lib/libleptonica.so.6" out/
+              cp -L "$PREFIX/lib/libtesseract.so.5" out/
+            '
+
+      - name: Verify GLIBC compatibility (must be <= 2.28)
+        run: |
+          for SO in out/*.so.*; do
+            ALL=$(objdump -T "$SO" | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sort -Vu || true)
+            MAX=$(printf "%s" "$ALL" | tail -1)
+            echo "=== $SO max GLIBC: $MAX ==="
+            HIGHEST=$(printf "%s\nGLIBC_2.28\n" "$MAX" | sort -V | tail -1)
+            if [ "$HIGHEST" != "GLIBC_2.28" ]; then
+              echo "ERROR: $SO requires $MAX > GLIBC_2.28"
+              exit 1
+            fi
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-x86-64-legacy
+          path: out/
+
+  # ----- Linux aarch64 modern (Ubuntu 24.04 ARM) ----------------------------
+  build_linux_aarch64:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: 17
+          distribution: temurin
+
+      - name: Get Version Info
+        run: |
+          echo "TESSERACT_VERSION=$(mvn build-helper:parse-version org.apache.maven.plugins:maven-help-plugin:3.2.0:evaluate -Dexpression=tesseract.version.long -q -DforceStdout)" >> $GITHUB_ENV
+          echo "LEPTONICA_VERSION=$(mvn build-helper:parse-version org.apache.maven.plugins:maven-help-plugin:3.2.0:evaluate -Dexpression=leptonica.version -q -DforceStdout)" >> $GITHUB_ENV
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -q -y
+          sudo apt-get install -q -y \
+            build-essential autoconf automake libtool pkg-config \
+            libpng-dev libjpeg-dev libtiff-dev libwebp-dev libopenjp2-7-dev zlib1g-dev \
+            curl
+
+      - name: Build leptonica + tesseract
+        run: |
+          PREFIX="$RUNNER_TEMP/legerix-prefix"
+          mkdir -p "$PREFIX"
+          ./scripts/build-leptonica.sh "$LEPTONICA_VERSION" "$PREFIX"
+          ./scripts/build-tesseract.sh "$TESSERACT_VERSION" "$PREFIX"
+          mkdir -p out
+          cp -L "$PREFIX/lib/libleptonica.so.6" out/
+          cp -L "$PREFIX/lib/libtesseract.so.5" out/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-aarch64
+          path: out/
+
+  # ----- Linux aarch64 legacy (manylinux_2_28 container) --------------------
+  build_linux_aarch64_legacy:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: 17
+          distribution: temurin
+
+      - name: Get Version Info
+        run: |
+          echo "TESSERACT_VERSION=$(mvn build-helper:parse-version org.apache.maven.plugins:maven-help-plugin:3.2.0:evaluate -Dexpression=tesseract.version.long -q -DforceStdout)" >> $GITHUB_ENV
+          echo "LEPTONICA_VERSION=$(mvn build-helper:parse-version org.apache.maven.plugins:maven-help-plugin:3.2.0:evaluate -Dexpression=leptonica.version -q -DforceStdout)" >> $GITHUB_ENV
+
+      - name: Build in manylinux_2_28 (aarch64)
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/io -w /io \
+            -e TESSERACT_VERSION=${{ env.TESSERACT_VERSION }} \
+            -e LEPTONICA_VERSION=${{ env.LEPTONICA_VERSION }} \
+            quay.io/pypa/manylinux_2_28_aarch64 \
+            /bin/bash -ec '
+              yum install -y -q \
+                libpng-devel libjpeg-turbo-devel libtiff-devel libwebp-devel openjpeg2-devel zlib-devel \
+                autoconf automake libtool pkgconfig curl
+              PREFIX=/io/_legacy-prefix
+              mkdir -p "$PREFIX"
+              ./scripts/build-leptonica.sh "$LEPTONICA_VERSION" "$PREFIX"
+              ./scripts/build-tesseract.sh "$TESSERACT_VERSION" "$PREFIX"
+              mkdir -p out
+              cp -L "$PREFIX/lib/libleptonica.so.6" out/
+              cp -L "$PREFIX/lib/libtesseract.so.5" out/
+            '
+
+      - name: Verify GLIBC compatibility (must be <= 2.28)
+        run: |
+          for SO in out/*.so.*; do
+            ALL=$(objdump -T "$SO" | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sort -Vu || true)
+            MAX=$(printf "%s" "$ALL" | tail -1)
+            echo "=== $SO max GLIBC: $MAX ==="
+            HIGHEST=$(printf "%s\nGLIBC_2.28\n" "$MAX" | sort -V | tail -1)
+            if [ "$HIGHEST" != "GLIBC_2.28" ]; then
+              echo "ERROR: $SO requires $MAX > GLIBC_2.28"
+              exit 1
+            fi
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-aarch64-legacy
+          path: out/
+
+  # ----- macOS x86_64 -------------------------------------------------------
+  build_macos_x64:
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: 17
+          distribution: temurin
+
+      - name: Get Version Info
+        run: |
+          echo "TESSERACT_VERSION=$(mvn build-helper:parse-version org.apache.maven.plugins:maven-help-plugin:3.2.0:evaluate -Dexpression=tesseract.version.long -q -DforceStdout)" >> $GITHUB_ENV
+          echo "LEPTONICA_VERSION=$(mvn build-helper:parse-version org.apache.maven.plugins:maven-help-plugin:3.2.0:evaluate -Dexpression=leptonica.version -q -DforceStdout)" >> $GITHUB_ENV
+
+      - name: Install build dependencies
+        run: |
+          brew install autoconf automake libtool pkg-config libpng jpeg libtiff webp openjpeg
+
+      - name: Build leptonica + tesseract
+        run: |
+          PREFIX="$RUNNER_TEMP/legerix-prefix"
+          mkdir -p "$PREFIX"
+          ./scripts/build-leptonica.sh "$LEPTONICA_VERSION" "$PREFIX"
+          ./scripts/build-tesseract.sh "$TESSERACT_VERSION" "$PREFIX"
+          mkdir -p out
+          cp -L "$PREFIX/lib/libleptonica.6.dylib" out/
+          cp -L "$PREFIX/lib/libtesseract.5.dylib" out/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: darwin
+          path: out/
+
+  # ----- macOS aarch64 (Apple Silicon) --------------------------------------
+  build_macos_aarch64:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: 17
+          distribution: temurin
+          architecture: aarch64
+
+      - name: Get Version Info
+        run: |
+          echo "TESSERACT_VERSION=$(mvn build-helper:parse-version org.apache.maven.plugins:maven-help-plugin:3.2.0:evaluate -Dexpression=tesseract.version.long -q -DforceStdout)" >> $GITHUB_ENV
+          echo "LEPTONICA_VERSION=$(mvn build-helper:parse-version org.apache.maven.plugins:maven-help-plugin:3.2.0:evaluate -Dexpression=leptonica.version -q -DforceStdout)" >> $GITHUB_ENV
+
+      - name: Install build dependencies
+        run: |
+          brew install autoconf automake libtool pkg-config libpng jpeg libtiff webp openjpeg
+
+      - name: Build leptonica + tesseract
+        run: |
+          PREFIX="$RUNNER_TEMP/legerix-prefix"
+          mkdir -p "$PREFIX"
+          ./scripts/build-leptonica.sh "$LEPTONICA_VERSION" "$PREFIX"
+          ./scripts/build-tesseract.sh "$TESSERACT_VERSION" "$PREFIX"
+          mkdir -p out
+          cp -L "$PREFIX/lib/libleptonica.6.dylib" out/
+          cp -L "$PREFIX/lib/libtesseract.5.dylib" out/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: darwin-aarch64
+          path: out/
+
+  # ----- Windows x86_64 (vcpkg) ---------------------------------------------
+  build_windows_x64:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: 17
+          distribution: temurin
+
+      - name: Get Version Info
+        shell: bash
+        run: |
+          echo "TESSERACT_VERSION=$(mvn build-helper:parse-version org.apache.maven.plugins:maven-help-plugin:3.2.0:evaluate -Dexpression=tesseract.version.long -q -DforceStdout)" >> $GITHUB_ENV
+          echo "LEPTONICA_VERSION=$(mvn build-helper:parse-version org.apache.maven.plugins:maven-help-plugin:3.2.0:evaluate -Dexpression=leptonica.version -q -DforceStdout)" >> $GITHUB_ENV
+
+      - name: Install vcpkg dependencies
+        shell: bash
+        run: |
+          vcpkg install tesseract:x64-windows leptonica:x64-windows
+
+      - name: Stage native artifacts
+        shell: bash
+        run: |
+          mkdir -p out
+          VCPKG_BIN="/c/vcpkg/installed/x64-windows/bin"
+          cp "$VCPKG_BIN"/tesseract*.dll out/
+          cp "$VCPKG_BIN"/leptonica-*.dll out/
+          ls -la out/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: win32-x86-64
+          path: out/
+
+  # ----- Final job: assemble + deploy to Maven Central ----------------------
+  build_dist:
+    needs:
+      - build_linux_x64
+      - build_linux_x64_legacy
+      - build_linux_aarch64
+      - build_linux_aarch64_legacy
+      - build_macos_x64
+      - build_macos_aarch64
+      - build_windows_x64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: 17
+          distribution: temurin
+          server-id: central
+          server-username: CENTRAL_USERNAME
+          server-password: CENTRAL_PASSWORD
+          gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
+          gpg-passphrase: GPG_PASSPHRASE
+
+      - name: Get Version Info
+        run: |
+          echo "POM_VERSION=$(mvn build-helper:parse-version org.apache.maven.plugins:maven-help-plugin:3.2.0:evaluate -Dexpression=project.version -q -DforceStdout)" >> $GITHUB_ENV
+
+      - name: Download all native artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Stage natives into src/main/resources
+        run: |
+          rm -rf src/main/resources/linux-x86-64 \
+                 src/main/resources/linux-x86-64-legacy \
+                 src/main/resources/linux-aarch64 \
+                 src/main/resources/linux-aarch64-legacy \
+                 src/main/resources/darwin \
+                 src/main/resources/darwin-aarch64 \
+                 src/main/resources/win32-x86-64
+          mkdir -p src/main/resources/linux-x86-64 \
+                   src/main/resources/linux-x86-64-legacy \
+                   src/main/resources/linux-aarch64 \
+                   src/main/resources/linux-aarch64-legacy \
+                   src/main/resources/darwin \
+                   src/main/resources/darwin-aarch64 \
+                   src/main/resources/win32-x86-64
+          cp linux-x86-64/*           src/main/resources/linux-x86-64/
+          cp linux-x86-64-legacy/*    src/main/resources/linux-x86-64-legacy/
+          cp linux-aarch64/*          src/main/resources/linux-aarch64/
+          cp linux-aarch64-legacy/*   src/main/resources/linux-aarch64-legacy/
+          cp darwin/*                 src/main/resources/darwin/
+          cp darwin-aarch64/*         src/main/resources/darwin-aarch64/
+          cp win32-x86-64/*           src/main/resources/win32-x86-64/
+
+      - name: Fetch eng.traineddata
+        run: ./scripts/fetch-traineddata.sh src/main/resources/tessdata
+
+      - name: Verify natives
+        run: |
+          echo "=== Natives staged ==="
+          find src/main/resources -type f \( -name "*.so*" -o -name "*.dylib" -o -name "*.dll" \) | sort
+          COUNT=$(find src/main/resources -type f \( -name "*.so*" -o -name "*.dylib" -o -name "*.dll" \) | wc -l)
+          # 2 libs * 7 platforms = 14
+          if [ "$COUNT" -ne 14 ]; then
+            echo "ERROR: expected 14 natives, found $COUNT"
+            exit 1
+          fi
+          test -f src/main/resources/tessdata/eng.traineddata
+          echo "OK"
+
+      - name: Build, Test and Deploy to Maven Central
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: mvn -B deploy -P release
+        env:
+          CENTRAL_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
+          CENTRAL_PASSWORD: ${{ secrets.CENTRAL_PASSWORD }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+
+      - name: Build only (non-tag runs)
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        run: mvn -B install
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: target/legerix*
+
+  # ----- GitHub release upload (tag-driven) ---------------------------------
+  release:
+    needs: build_dist
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: 17
+          distribution: temurin
+
+      - name: Get Version Info
+        id: version
+        run: |
+          VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+
+      - uses: actions/download-artifact@v4
+
+      - name: Prepare release assets
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          mkdir -p release-assets
+          cp dist/legerix-${VERSION}.jar release-assets/ || cp dist/*.jar release-assets/
+          for d in linux-x86-64 linux-x86-64-legacy linux-aarch64 linux-aarch64-legacy darwin darwin-aarch64 win32-x86-64; do
+            for f in "$d"/*; do
+              [ -f "$f" ] && cp "$f" "release-assets/$(basename "$f").$d" || true
+            done
+          done
+          ls -lh release-assets/
+
+      - name: Create release if needed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v${{ steps.version.outputs.VERSION }}"
+          if ! gh release view "$TAG" > /dev/null 2>&1; then
+            gh release create "$TAG" \
+              --title "Legerix ${{ steps.version.outputs.VERSION }}" \
+              --notes "Tesseract + Leptonica natives bundled for Linux (x86_64 + aarch64, modern + legacy glibc 2.28), macOS (x86_64 + aarch64) and Windows (x86_64)."
+          fi
+
+      - name: Upload assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v${{ steps.version.outputs.VERSION }}"
+          gh release upload "$TAG" release-assets/* --clobber

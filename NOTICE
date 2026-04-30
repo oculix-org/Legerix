@@ -1,0 +1,21 @@
+Legerix
+Copyright (c) 2026 Julien Mer Consulting
+
+This product bundles third-party software:
+
+  Tesseract OCR
+    Copyright (c) 2006 Google Inc., 1985-2007 Hewlett-Packard, and other
+    contributors. Licensed under the Apache License, Version 2.0.
+    https://github.com/tesseract-ocr/tesseract
+
+  Leptonica
+    Copyright (c) 2001-2025 Dan Bloomberg and other contributors.
+    Licensed under the BSD 2-Clause License.
+    https://github.com/DanBloomberg/leptonica
+
+  eng.traineddata (English fast model)
+    Copyright (c) 2017-2025 Google Inc. and Tesseract contributors.
+    Licensed under the Apache License, Version 2.0.
+    https://github.com/tesseract-ocr/tessdata_fast
+
+Full third-party licensing details are in THIRD-PARTY.txt.
