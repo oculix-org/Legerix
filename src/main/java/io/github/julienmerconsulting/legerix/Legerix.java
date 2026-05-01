@@ -34,9 +34,6 @@ public final class Legerix {
 
     private static final Logger logger = Logger.getLogger(Legerix.class.getName());
 
-    private static final String TESSERACT_LIB = "tesseract";
-    private static final String LEPTONICA_LIB = "lept";
-
     public enum OS {
         LINUX("^[Ll]inux$"),
         OSX("^[Mm]ac OS X$"),
@@ -122,13 +119,33 @@ public final class Legerix {
         Files.createDirectories(tessdataDir);
         extractIfMissing("tessdata/eng.traineddata", tessdataDir.resolve("eng.traineddata"));
 
-        // Make JNA find the libs first.
-        NativeLibrary.addSearchPath(TESSERACT_LIB, target.toAbsolutePath().toString());
-        NativeLibrary.addSearchPath(LEPTONICA_LIB, target.toAbsolutePath().toString());
+        // Make JNA find OUR libs by name, ahead of tess4j's bundled copies.
+        // tess4j's static initializer extracts its own (older) leptonica to
+        // /tmp/tess4j/ and prepends that path to jna.library.path. JNA's
+        // per-library addSearchPath is consulted BEFORE jna.library.path, so
+        // our path wins as long as the file name matches the libname regex
+        // (libtesseract.so.5 matches lib<name>\.so(\.\d+)*).
+        final String ours = target.toAbsolutePath().toString();
+        NativeLibrary.addSearchPath("tesseract", ours);
+        NativeLibrary.addSearchPath("leptonica", ours);
+        NativeLibrary.addSearchPath("lept", ours);
 
-        // Load leptonica first (tesseract depends on it).
-        loadLibraryFile(target, leptonicaFileName(os));
-        loadLibraryFile(target, tesseractFileName(os));
+        // Load via JNA's NativeLibrary.getInstance() instead of System.load().
+        // This matters because:
+        //   1. JNA loads with RTLD_GLOBAL on Linux/macOS, so leptonica's
+        //      symbols (e.g. pixFindBaselinesGen, introduced in 1.85) become
+        //      globally visible. Otherwise tess4j later loads its own older
+        //      leptonica RTLD_GLOBAL and that one shadows ours, breaking
+        //      tesseract 5.5+ which calls those new functions.
+        //   2. JNA caches the NativeLibrary by name. When tess4j subsequently
+        //      calls Native.loadLibrary("tesseract"), it gets OUR cached
+        //      handle instead of triggering its own classpath extraction.
+        //
+        // Order matters: leptonica first (tesseract.so DT_NEEDED depends on
+        // libleptonica.so.6, and we want OUR copy registered globally before
+        // the dynamic linker resolves that dep).
+        loadViaJna("leptonica", target, leptonicaFileName(os));
+        loadViaJna("tesseract", target, tesseractFileName(os));
 
         extractionDir = target;
         loaded = true;
@@ -275,7 +292,21 @@ public final class Legerix {
         }
     }
 
-    private static void loadLibraryFile(final Path dir, final String fileName) {
+    /**
+     * Load a library via JNA (RTLD_GLOBAL on Linux/macOS) so symbols are
+     * visible to the rest of the process and JNA caches the handle by name.
+     * If JNA can't resolve the name (e.g. because the on-disk file uses a
+     * versioned name JNA's regex doesn't match), fall back to a direct
+     * dlopen-by-path via System.load so we still load *something*.
+     */
+    private static void loadViaJna(final String jnaName, final Path dir, final String fileName) {
+        try {
+            NativeLibrary.getInstance(jnaName);
+            return;
+        } catch (final UnsatisfiedLinkError e) {
+            logger.log(Level.FINE, "JNA could not resolve \"" + jnaName + "\" by name, "
+                    + "falling back to System.load on the absolute file path", e);
+        }
         final Path p = dir.resolve(fileName);
         try {
             System.load(p.toAbsolutePath().toString());
