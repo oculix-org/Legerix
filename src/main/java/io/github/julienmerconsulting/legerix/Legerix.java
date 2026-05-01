@@ -34,9 +34,16 @@ public final class Legerix {
 
     private static final Logger logger = Logger.getLogger(Legerix.class.getName());
 
+    /**
+     * Operating system family detected at runtime, matched against the
+     * {@code os.name} system property.
+     */
     public enum OS {
+        /** Any Linux distribution (matches {@code os.name} = {@code Linux}). */
         LINUX("^[Ll]inux$"),
+        /** Apple macOS (matches {@code os.name} = {@code Mac OS X}). */
         OSX("^[Mm]ac OS X$"),
+        /** Microsoft Windows (matches any {@code os.name} starting with {@code Windows}). */
         WINDOWS("^[Ww]indows.*");
 
         private final Set<Pattern> patterns;
@@ -55,6 +62,14 @@ public final class Legerix {
             return false;
         }
 
+        /**
+         * Detects the current OS by matching the {@code os.name} system property
+         * against the patterns of each enum value.
+         *
+         * @return the {@link OS} value matching the running JVM
+         * @throws UnsupportedOperationException if {@code os.name} matches none
+         *         of the supported families (Linux, macOS, Windows)
+         */
         public static OS getCurrent() {
             final String osName = System.getProperty("os.name");
             for (final OS os : values()) {
@@ -64,8 +79,14 @@ public final class Legerix {
         }
     }
 
+    /**
+     * CPU architecture detected at runtime, matched against the
+     * {@code os.arch} system property.
+     */
     public enum Arch {
+        /** 64-bit Intel/AMD (matches {@code amd64} or {@code x86_64}). */
         X86_64("amd64", "x86_64"),
+        /** 64-bit ARM (matches {@code aarch64} or {@code arm64}). */
         AARCH64("aarch64", "arm64");
 
         private final Set<String> ids;
@@ -74,6 +95,14 @@ public final class Legerix {
             this.ids = new HashSet<>(Arrays.asList(ids));
         }
 
+        /**
+         * Detects the current CPU architecture by reading the {@code os.arch}
+         * system property.
+         *
+         * @return the {@link Arch} value matching the running JVM
+         * @throws UnsupportedOperationException if {@code os.arch} is neither
+         *         {@code amd64}/{@code x86_64} nor {@code aarch64}/{@code arm64}
+         */
         public static Arch getCurrent() {
             final String osArch = System.getProperty("os.arch");
             for (final Arch a : values()) {
@@ -91,10 +120,23 @@ public final class Legerix {
     private Legerix() {}
 
     /**
-     * Extracts native libraries to a per-user cache directory and loads them
-     * into the current JVM. Idempotent.
+     * Extracts the bundled Tesseract + Leptonica native libraries to a per-user
+     * cache directory and loads them into the current JVM. Idempotent: a second
+     * call returns the cached directory without re-extracting or re-loading.
      *
-     * @return the directory containing the extracted natives.
+     * <p>On Linux, the appropriate glibc tier (modern vs legacy) is selected
+     * automatically by inspecting {@code ldd --version}. On macOS and Windows
+     * the only available variant is used.
+     *
+     * <p>The {@code tessdata/eng.traineddata} file shipped in the artifact is
+     * also extracted alongside the natives so that {@link #getTessdataPath()}
+     * can be passed directly to a Tesseract API.
+     *
+     * @return the absolute path to the directory where the natives have been
+     *         extracted (already loaded into the JVM)
+     * @throws IOException if the cache directory cannot be created, a bundled
+     *         resource is missing from the classpath, or extraction to disk
+     *         fails (e.g. disk full, permission denied)
      */
     public static synchronized Path loadNatives() throws IOException {
         if (loaded) {
@@ -155,7 +197,17 @@ public final class Legerix {
         return target;
     }
 
-    /** Returns the path to the extracted tessdata folder (containing {@code eng.traineddata}). */
+    /**
+     * Returns the path to the extracted {@code tessdata} folder, suitable for
+     * passing to a Tesseract instance. Triggers {@link #loadNatives()} if it
+     * has not been called yet.
+     *
+     * @return the absolute path to the {@code tessdata} directory containing
+     *         {@code eng.traineddata}
+     * @throws IllegalStateException if natives have not been loaded yet and
+     *         the implicit {@link #loadNatives()} call fails (the underlying
+     *         {@link IOException} is wrapped as cause)
+     */
     public static Path getTessdataPath() {
         if (!loaded) {
             try {
@@ -167,13 +219,29 @@ public final class Legerix {
         return cacheDir().resolve(getTesseractVersion()).resolve("tessdata");
     }
 
-    /** Detected runtime tier: {@code "modern"}, {@code "legacy"}, or {@code "n/a"} on non-Linux. */
+    /**
+     * Returns the glibc tier selected for this JVM run. Useful for diagnostics
+     * (which native variant got loaded).
+     *
+     * @return {@code "modern"} on Linux with glibc &ge; 2.38, {@code "legacy"}
+     *         on older Linux (or when glibc detection failed),
+     *         {@code "n/a"} on non-Linux platforms
+     */
     public static String getGlibcTier() {
         if (detectedTier != null) return detectedTier;
         return detectGlibcTier(OS.getCurrent());
     }
 
-    /** Tesseract version embedded in this artifact (e.g. {@code 5.5.0}). */
+    /**
+     * Returns the upstream Tesseract version embedded in this artifact, parsed
+     * from the JAR's {@code Implementation-Version} manifest entry. The legerix
+     * build suffix (e.g. {@code -1} in {@code 5.5.0-1}) is stripped.
+     *
+     * @return the Tesseract version string in {@code MAJOR.MINOR.PATCH} form
+     *         (e.g. {@code "5.5.0"}); falls back to a hardcoded default when
+     *         the manifest cannot be read (e.g. running from an exploded
+     *         classpath without manifest)
+     */
     public static String getTesseractVersion() {
         final String v = Legerix.class.getPackage().getImplementationVersion();
         if (v != null) {
