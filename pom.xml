@@ -5,12 +5,12 @@
 	<modelVersion>4.0.0</modelVersion>
 
 	<packaging>bundle</packaging>
-	<groupId>io.github.julienmerconsulting</groupId>
+	<groupId>io.github.oculix-org</groupId>
 	<artifactId>legerix</artifactId>
 	<version>5.5.0-1</version>
 	<name>Legerix</name>
 	<description>Tesseract + Leptonica packaged with native libraries and loader for multiple platforms. From Latin "legere", to read.</description>
-	<url>https://github.com/julienmerconsulting/legerix</url>
+	<url>https://github.com/oculix-org/legerix</url>
 	<inceptionYear>2026</inceptionYear>
 
 	<properties>
@@ -81,15 +81,15 @@
 	</licenses>
 
 	<scm>
-		<url>https://github.com/julienmerconsulting/legerix</url>
-		<connection>scm:git:https://github.com/julienmerconsulting/legerix.git</connection>
-		<developerConnection>scm:git:git@github.com:julienmerconsulting/legerix.git</developerConnection>
+		<url>https://github.com/oculix-org/legerix</url>
+		<connection>scm:git:https://github.com/oculix-org/legerix.git</connection>
+		<developerConnection>scm:git:git@github.com:oculix-org/legerix.git</developerConnection>
 		<tag>HEAD</tag>
 	</scm>
 
 	<issueManagement>
 		<system>GitHub</system>
-		<url>https://github.com/julienmerconsulting/legerix/issues</url>
+		<url>https://github.com/oculix-org/legerix/issues</url>
 	</issueManagement>
 
 	<developers>
