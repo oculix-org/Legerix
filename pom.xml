@@ -163,44 +163,24 @@
 				<version>3.5.5</version>
 			</plugin>
 
-			<!-- No public javadoc to publish; ship an empty -javadoc.jar so Maven
-			     Central accepts the upload without running maven-javadoc-plugin. -->
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
-				<artifactId>maven-jar-plugin</artifactId>
-				<version>3.4.2</version>
+				<artifactId>maven-javadoc-plugin</artifactId>
+				<version>3.12.0</version>
 				<executions>
 					<execution>
-						<id>empty-javadoc-jar</id>
-						<phase>package</phase>
+						<id>attach-javadocs</id>
 						<goals>
 							<goal>jar</goal>
 						</goals>
-						<configuration>
-							<classifier>javadoc</classifier>
-							<classesDirectory>${project.build.directory}/empty-javadoc</classesDirectory>
-						</configuration>
 					</execution>
 				</executions>
-			</plugin>
-			<plugin>
-				<groupId>org.apache.maven.plugins</groupId>
-				<artifactId>maven-antrun-plugin</artifactId>
-				<version>3.1.0</version>
-				<executions>
-					<execution>
-						<id>create-empty-javadoc-dir</id>
-						<phase>prepare-package</phase>
-						<goals>
-							<goal>run</goal>
-						</goals>
-						<configuration>
-							<target>
-								<mkdir dir="${project.build.directory}/empty-javadoc" />
-							</target>
-						</configuration>
-					</execution>
-				</executions>
+				<configuration>
+					<failOnError>false</failOnError>
+					<failOnWarnings>false</failOnWarnings>
+					<doclint>none</doclint>
+					<quiet>true</quiet>
+				</configuration>
 			</plugin>
 		</plugins>
 	</build>
