@@ -290,6 +290,23 @@ jobs:
           echo "TESSERACT_VERSION=$(mvn build-helper:parse-version org.apache.maven.plugins:maven-help-plugin:3.2.0:evaluate -Dexpression=tesseract.version.long -q -DforceStdout)" >> $GITHUB_ENV
           echo "LEPTONICA_VERSION=$(mvn build-helper:parse-version org.apache.maven.plugins:maven-help-plugin:3.2.0:evaluate -Dexpression=leptonica.version -q -DforceStdout)" >> $GITHUB_ENV
 
+      # vcpkg builds every transitive dep from source (openssl, libcurl,
+      # libpng, libjpeg-turbo, libtiff, leptonica, tesseract...) — ~45 min
+      # cold. The installed/ + packages/ + buildtrees/ trees can be cached
+      # by GitHub Actions, dropping subsequent runs to ~2 min. Cache key
+      # depends on tesseract+leptonica versions so a version bump invalidates.
+      - name: Cache vcpkg
+        uses: actions/cache@v4
+        with:
+          path: |
+            C:/vcpkg/installed
+            C:/vcpkg/packages
+            C:/vcpkg/buildtrees
+            C:/vcpkg/downloads
+          key: vcpkg-windows-tesseract-${{ env.TESSERACT_VERSION }}-leptonica-${{ env.LEPTONICA_VERSION }}
+          restore-keys: |
+            vcpkg-windows-
+
       - name: Install vcpkg dependencies
         shell: bash
         run: |
