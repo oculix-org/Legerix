@@ -34,11 +34,15 @@ LICENSE).
    Copyright    : (c) 2001-2025 Dan Bloomberg and contributors
 
 ------------------------------------------------------------------------
-3. eng.traineddata (English fast model)
+3. Tesseract traineddata fast models
 ------------------------------------------------------------------------
 
    Source       : https://github.com/tesseract-ocr/tessdata_fast
-   Path in jar  : tessdata/eng.traineddata
+   Paths in jar : tessdata/eng.traineddata     (English)
+                  tessdata/fra.traineddata     (French)
+                  tessdata/spa.traineddata     (Spanish)
+                  tessdata/chi_sim.traineddata (Simplified Chinese)
+                  tessdata/hin.traineddata     (Hindi)
    License      : Apache License, Version 2.0
    License URL  : https://www.apache.org/licenses/LICENSE-2.0
    Copyright    : (c) 2017-2025 Google Inc. and Tesseract contributors
