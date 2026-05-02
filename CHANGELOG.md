@@ -7,6 +7,22 @@ in the form `<tesseract-version>-<build>`.
 
 ## [Unreleased]
 
+## [5.5.0-4] - TBD
+
+### Fixed
+- Windows: `Legerix.loadNatives()` now calls `SetDllDirectoryW` on the
+  extract directory before `System.load()`, so the vcpkg shim DLLs
+  (`leptonica-1.87.0.dll`, `tesseract55.dll`) can resolve their sibling
+  imports (`libleptonica1870.dll`, `libpng16.dll`, ...) from the same
+  folder. Previous releases failed with `UnsatisfiedLinkError: Can't find
+  dependent libraries` unless the user manually prepended the extract
+  directory to `PATH`.
+- Cache directory is now keyed on the full Legerix Maven version
+  (e.g. `5.5.0-4`) instead of the upstream Tesseract version (`5.5.0`),
+  so bumping only the build suffix invalidates stale extracted DLLs.
+  Previously, upgrading from `5.5.0-2` to `5.5.0-3` left the broken
+  Windows DLLs from the older cache in place.
+
 ## [5.5.0-3] - TBD
 
 ### Added

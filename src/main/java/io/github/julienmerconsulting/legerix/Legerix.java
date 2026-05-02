@@ -1,6 +1,9 @@
 package io.github.julienmerconsulting.legerix;
 
+import com.sun.jna.Native;
 import com.sun.jna.NativeLibrary;
+import com.sun.jna.WString;
+import com.sun.jna.win32.StdCallLibrary;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -172,7 +175,7 @@ public final class Legerix {
         detectedTier = tier;
         final String resourceDir = resourceDirFor(os, arch, tier);
 
-        final Path target = cacheDir().resolve(getTesseractVersion()).resolve(resourceDir);
+        final Path target = cacheDir().resolve(cacheVersion()).resolve(resourceDir);
         Files.createDirectories(target);
 
         for (final String lib : librariesFor(os)) {
@@ -190,7 +193,7 @@ public final class Legerix {
         // ~80% of the world population. Consumers wanting other languages can
         // drop additional *.traineddata files alongside these in the same
         // cache directory (see getTessdataPath()).
-        final Path tessdataDir = cacheDir().resolve(getTesseractVersion()).resolve("tessdata");
+        final Path tessdataDir = cacheDir().resolve(cacheVersion()).resolve("tessdata");
         Files.createDirectories(tessdataDir);
         for (final String lang : BUNDLED_LANGUAGES) {
             extractIfMissing("tessdata/" + lang + ".traineddata",
@@ -207,6 +210,20 @@ public final class Legerix {
         NativeLibrary.addSearchPath("tesseract", ours);
         NativeLibrary.addSearchPath("leptonica", ours);
         NativeLibrary.addSearchPath("lept", ours);
+
+        // On Windows, the vcpkg-built leptonica/tesseract DLLs are shims that
+        // import sibling DLLs (libleptonica1870.dll, libpng16.dll, ...) from
+        // the same directory. System.load() uses the default Win32 DLL search
+        // path which does not include the directory of the loaded DLL, so the
+        // sibling imports fail with "Can't find dependent libraries". Adding
+        // our extract dir to the search path via SetDllDirectoryW fixes that.
+        if (os == OS.WINDOWS) {
+            final int rc = WinKernel32.INSTANCE.SetDllDirectoryW(new WString(ours)) ? 1 : 0;
+            if (rc == 0) {
+                logger.log(Level.WARNING, "SetDllDirectoryW({0}) failed; "
+                        + "Windows native loading may fail with UnsatisfiedLinkError", ours);
+            }
+        }
 
         // Load via JNA's NativeLibrary.getInstance() instead of System.load().
         // This matters because:
@@ -252,7 +269,7 @@ public final class Legerix {
                 throw new IllegalStateException("loadNatives() failed", e);
             }
         }
-        return cacheDir().resolve(getTesseractVersion()).resolve("tessdata");
+        return cacheDir().resolve(cacheVersion()).resolve("tessdata");
     }
 
     /**
@@ -286,6 +303,13 @@ public final class Legerix {
             return dash > 0 ? v.substring(0, dash) : v;
         }
         return "5.5.0";
+    }
+
+    // Full Legerix Maven version (e.g. "5.5.0-3"), used as cache key so that
+    // bumping only the Legerix build suffix invalidates stale extracted DLLs.
+    private static String cacheVersion() {
+        final String v = Legerix.class.getPackage().getImplementationVersion();
+        return v != null ? v : getTesseractVersion();
     }
 
     // -- internals ----------------------------------------------------------
@@ -452,6 +476,14 @@ public final class Legerix {
                 extractIfMissing(name, target.resolve(tail));
             }
         }
+    }
+
+    // Minimal JNA binding to Win32 SetDllDirectoryW. Only loaded/initialized
+    // on Windows; classloading is lazy so the Native.load call here does not
+    // execute on Linux/macOS.
+    private interface WinKernel32 extends StdCallLibrary {
+        WinKernel32 INSTANCE = Native.load("kernel32", WinKernel32.class);
+        boolean SetDllDirectoryW(WString lpPathName);
     }
 
     /**

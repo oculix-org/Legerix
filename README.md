@@ -116,9 +116,10 @@ tess.setDatapath(tessdata.toString());
 tess.setLanguage("deu");
 ```
 
-The cache directory is writable and persistent
-(`~/.cache/legerix/5.5.0/tessdata/` on Linux,
-`%LOCALAPPDATA%\legerix\5.5.0\tessdata\` on Windows).
+The cache directory is writable and persistent, keyed on the full Legerix
+version so a build-suffix bump invalidates stale extracted natives
+(`~/.cache/legerix/5.5.0-4/tessdata/` on Linux,
+`%LOCALAPPDATA%\legerix\5.5.0-4\tessdata\` on Windows).
 
 Alternatively, point tess4j at a completely separate `tessdata` folder you
 control:

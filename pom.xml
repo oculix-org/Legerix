@@ -7,7 +7,7 @@
 	<packaging>bundle</packaging>
 	<groupId>io.github.oculix-org</groupId>
 	<artifactId>legerix</artifactId>
-	<version>5.5.0-3</version>
+	<version>5.5.0-4</version>
 	<name>Legerix</name>
 	<description>Tesseract + Leptonica packaged with native libraries and loader for multiple platforms. From Latin "legere", to read.</description>
 	<url>https://github.com/oculix-org/legerix</url>
