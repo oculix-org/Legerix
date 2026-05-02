@@ -63,7 +63,7 @@ jobs:
           cp assets/leptonica-win-x86-64.dll                 src/main/resources/win32-x86-64/leptonica-1.87.0.dll
 
       - name: Fetch traineddata (5 bundled languages)
-        run: ./scripts/fetch-traineddata.sh src/main/resources/tessdata
+        run: bash ./scripts/fetch-traineddata.sh src/main/resources/tessdata
 
       - name: Verify staged payload
         run: |
