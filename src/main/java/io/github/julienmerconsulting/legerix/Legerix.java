@@ -6,6 +6,8 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.net.JarURLConnection;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -13,10 +15,13 @@ import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Enumeration;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.jar.JarEntry;
+import java.util.jar.JarFile;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
@@ -166,6 +171,16 @@ public final class Legerix {
 
         for (final String lib : librariesFor(os)) {
             extractIfMissing(resourceDir + "/" + lib, target.resolve(lib));
+        }
+
+        // Windows: vcpkg links Tesseract dynamically against ~10 codec /
+        // utility DLLs (libpng, tiff, jpeg62, libwebp, openjp2, zlib, gif,
+        // libcurl, libarchive, …) that the loader resolves at runtime from
+        // the directory containing tesseract55.dll. Extract every file
+        // shipped under the resource directory, not just the two top-level
+        // libraries hard-coded in librariesFor(WINDOWS).
+        if (os == OS.WINDOWS) {
+            extractAllFromResourceDir(resourceDir, target);
         }
 
         // tessdata: bundled lightweight (tessdata_fast) language models covering
@@ -370,6 +385,41 @@ public final class Legerix {
             }
         }
         return Paths.get(home, ".cache", "legerix");
+    }
+
+    /**
+     * Extract every file directly under {@code resourceDir/} from the
+     * containing JAR into {@code target}. Used on Windows to ship the full
+     * vcpkg DLL closure (codecs + transitive deps) without having to
+     * enumerate them by name.
+     *
+     * <p>Falls back to a no-op if the classpath entry is a plain directory
+     * (exploded build, IDE) since in that case files are loaded directly
+     * by {@link com.sun.jna.NativeLibrary} from the classpath search path
+     * and don't need extracting.
+     */
+    private static void extractAllFromResourceDir(final String resourceDir, final Path target)
+            throws IOException {
+        final URL marker = Legerix.class.getClassLoader().getResource(resourceDir + "/");
+        if (marker == null) return;
+        if (!"jar".equals(marker.getProtocol())) {
+            // Exploded classpath: nothing to do (files already on disk).
+            return;
+        }
+        final JarURLConnection conn = (JarURLConnection) marker.openConnection();
+        conn.setUseCaches(false);
+        try (JarFile jar = conn.getJarFile()) {
+            final String prefix = resourceDir + "/";
+            final Enumeration<JarEntry> entries = jar.entries();
+            while (entries.hasMoreElements()) {
+                final JarEntry e = entries.nextElement();
+                final String name = e.getName();
+                if (e.isDirectory() || !name.startsWith(prefix)) continue;
+                final String tail = name.substring(prefix.length());
+                if (tail.isEmpty() || tail.indexOf('/') >= 0) continue;
+                extractIfMissing(name, target.resolve(tail));
+            }
+        }
     }
 
     private static void extractIfMissing(final String resource, final Path target) throws IOException {

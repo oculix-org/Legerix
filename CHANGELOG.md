@@ -7,6 +7,21 @@ in the form `<tesseract-version>-<build>`.
 
 ## [Unreleased]
 
+## [5.5.0-3] - TBD
+
+### Fixed
+- Windows: bundle the full vcpkg DLL closure (libpng, tiff, jpeg62, libwebp,
+  openjp2, zlib, gif, libcurl, libarchive, …) alongside `tesseract55.dll`
+  and `leptonica-*.dll`. Previously only the two top-level DLLs were copied
+  by the build and extracted at runtime, causing `UnsatisfiedLinkError` on
+  end-user machines that lack the transitive image-codec DLLs.
+- `Legerix.loadNatives()` on Windows now enumerates every file under the
+  `win32-x86-64/` resource directory and extracts them all, instead of only
+  the two hard-coded names returned by `librariesFor(WINDOWS)`.
+
+### Notes
+- Same Tesseract upstream (5.5.0). Build-only fix; no API change.
+
 ## [5.5.0-2] - TBD
 
 ### Added
