@@ -37,7 +37,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p assets
-          gh release download "$RELEASE_TAG" --dir assets --pattern '*.so.*' --pattern '*.dylib' --pattern '*.dll'
+          # *.so.* / *.dylib for Linux + macOS individual files;
+          # *.zip picks up legerix-win-x86-64.zip (full vcpkg DLL set).
+          gh release download "$RELEASE_TAG" --dir assets --pattern '*.so.*' --pattern '*.dylib' --pattern '*.zip'
           ls -la assets/
 
       - name: Stage natives into src/main/resources
@@ -62,8 +64,8 @@ jobs:
           cp assets/libleptonica.6-darwin.dylib              src/main/resources/darwin/libleptonica.6.dylib
           cp assets/libtesseract.5-darwin-aarch64.dylib      src/main/resources/darwin-aarch64/libtesseract.5.dylib
           cp assets/libleptonica.6-darwin-aarch64.dylib      src/main/resources/darwin-aarch64/libleptonica.6.dylib
-          cp assets/tesseract-win-x86-64.dll                 src/main/resources/win32-x86-64/tesseract55.dll
-          cp assets/leptonica-win-x86-64.dll                 src/main/resources/win32-x86-64/leptonica-1.87.0.dll
+          # Windows: unzip the full vcpkg DLL bundle into the resource dir.
+          unzip -o assets/legerix-win-x86-64.zip -d src/main/resources/win32-x86-64/
 
       - name: Fetch traineddata (5 bundled languages)
         run: bash ./scripts/fetch-traineddata.sh src/main/resources/tessdata
@@ -72,16 +74,21 @@ jobs:
         run: |
           echo "=== Natives staged ==="
           find src/main/resources -type f \( -name "*.so*" -o -name "*.dylib" -o -name "*.dll" \) | sort
-          COUNT=$(find src/main/resources -type f \( -name "*.so*" -o -name "*.dylib" -o -name "*.dll" \) | wc -l)
-          if [ "$COUNT" -ne 14 ]; then
-            echo "ERROR: expected 14 natives, found $COUNT"
+          UNIX_COUNT=$(find src/main/resources -type f \( -name "*.so*" -o -name "*.dylib" \) | wc -l)
+          WIN_COUNT=$(find src/main/resources/win32-x86-64 -type f -name "*.dll" | wc -l)
+          if [ "$UNIX_COUNT" -ne 12 ]; then
+            echo "ERROR: expected 12 Linux+macOS natives, found $UNIX_COUNT"
+            exit 1
+          fi
+          if [ "$WIN_COUNT" -lt 2 ]; then
+            echo "ERROR: expected at least 2 Windows DLLs, found $WIN_COUNT"
             exit 1
           fi
           for lang in eng fra spa chi_sim hin; do
             test -f "src/main/resources/tessdata/${lang}.traineddata" \
               || { echo "ERROR: missing tessdata/${lang}.traineddata"; exit 1; }
           done
-          echo "OK: 14 natives + 5 traineddata files (eng, fra, spa, chi_sim, hin)"
+          echo "OK: 12 Linux/macOS natives + $WIN_COUNT Windows DLLs + 5 traineddata files"
 
       - name: Publish to Maven Central
         run: mvn -B deploy -P release -DskipTests
