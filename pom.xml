@@ -125,6 +125,7 @@
 					<instructions>
 						<Export-Package>io.github.julienmerconsulting.legerix.*</Export-Package>
 						<Import-Package>!sun.reflect.*,*</Import-Package>
+						<Implementation-Version>${project.version}</Implementation-Version>
 						<Bundle-NativeCode>
 							linux-x86-64/libtesseract.so.5; osname=linux; processor=x86-64,
 							linux-aarch64/libtesseract.so.5; osname=linux; processor=aarch64,
