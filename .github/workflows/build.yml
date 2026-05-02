@@ -376,10 +376,10 @@ jobs:
           cp darwin-aarch64/*         src/main/resources/darwin-aarch64/
           cp win32-x86-64/*           src/main/resources/win32-x86-64/
 
-      - name: Fetch eng.traineddata
+      - name: Fetch traineddata (5 bundled languages)
         run: ./scripts/fetch-traineddata.sh src/main/resources/tessdata
 
-      - name: Verify natives
+      - name: Verify natives + traineddata
         run: |
           echo "=== Natives staged ==="
           find src/main/resources -type f \( -name "*.so*" -o -name "*.dylib" -o -name "*.dll" \) | sort
@@ -389,8 +389,11 @@ jobs:
             echo "ERROR: expected 14 natives, found $COUNT"
             exit 1
           fi
-          test -f src/main/resources/tessdata/eng.traineddata
-          echo "OK"
+          for lang in eng fra spa chi_sim hin; do
+            test -f "src/main/resources/tessdata/${lang}.traineddata" \
+              || { echo "ERROR: missing tessdata/${lang}.traineddata"; exit 1; }
+          done
+          echo "OK: 14 natives + 5 traineddata files (eng, fra, spa, chi_sim, hin)"
 
       - name: Build and test
         run: mvn -B install

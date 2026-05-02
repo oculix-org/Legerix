@@ -62,7 +62,7 @@ jobs:
           cp assets/tesseract-win-x86-64.dll                 src/main/resources/win32-x86-64/tesseract55.dll
           cp assets/leptonica-win-x86-64.dll                 src/main/resources/win32-x86-64/leptonica-1.87.0.dll
 
-      - name: Fetch eng.traineddata
+      - name: Fetch traineddata (5 bundled languages)
         run: ./scripts/fetch-traineddata.sh src/main/resources/tessdata
 
       - name: Verify staged payload
@@ -74,8 +74,11 @@ jobs:
             echo "ERROR: expected 14 natives, found $COUNT"
             exit 1
           fi
-          test -f src/main/resources/tessdata/eng.traineddata
-          echo "OK: 14 natives + tessdata/eng.traineddata"
+          for lang in eng fra spa chi_sim hin; do
+            test -f "src/main/resources/tessdata/${lang}.traineddata" \
+              || { echo "ERROR: missing tessdata/${lang}.traineddata"; exit 1; }
+          done
+          echo "OK: 14 natives + 5 traineddata files (eng, fra, spa, chi_sim, hin)"
 
       - name: Maven verify (compile + bundle + sources + javadoc + GPG sign)
         run: mvn -B verify -P release -DskipTests
@@ -90,8 +93,8 @@ jobs:
           echo "=== Natives + tessdata inside the jar ==="
           unzip -l "$JAR" | grep -E '\.(so|dll|dylib|traineddata)' | sort
           PAYLOAD=$(unzip -l "$JAR" | grep -E '\.(so|dll|dylib|traineddata)' | wc -l)
-          echo "Payload entries: $PAYLOAD (expected 15: 14 natives + 1 traineddata)"
-          if [ "$PAYLOAD" -ne 15 ]; then
+          echo "Payload entries: $PAYLOAD (expected 19: 14 natives + 5 traineddata)"
+          if [ "$PAYLOAD" -ne 19 ]; then
             echo "ERROR: jar payload mismatch"
             exit 1
           fi
