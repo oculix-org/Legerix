@@ -70,6 +70,8 @@ jobs:
           cp -L "$LIB_DIR"/libLerc.so.*     out/ 2>/dev/null || true
           cp -L "$LIB_DIR"/libjbig.so.*     out/ 2>/dev/null || true
           cp -L "$LIB_DIR"/libdeflate.so.*  out/ 2>/dev/null || true
+          # libsharpyuv is a transitive of libwebp itself (introduced in webp 1.3+)
+          cp -L "$LIB_DIR"/libsharpyuv.so.* out/ 2>/dev/null || true
           ls -la out/
 
       - uses: actions/upload-artifact@v4
@@ -125,6 +127,8 @@ jobs:
               cp -L /usr/lib64/libLerc.so.*     out/ 2>/dev/null || true
               cp -L /usr/lib64/libjbig.so.*     out/ 2>/dev/null || true
               cp -L /usr/lib64/libdeflate.so.*  out/ 2>/dev/null || true
+              # libsharpyuv is a transitive of libwebp itself (webp 1.3+)
+              cp -L /usr/lib64/libsharpyuv.so.* out/ 2>/dev/null || true
               ls -la out/
             '
 
@@ -244,6 +248,8 @@ jobs:
               cp -L /usr/lib64/libLerc.so.*     out/ 2>/dev/null || true
               cp -L /usr/lib64/libjbig.so.*     out/ 2>/dev/null || true
               cp -L /usr/lib64/libdeflate.so.*  out/ 2>/dev/null || true
+              # libsharpyuv is a transitive of libwebp itself (webp 1.3+)
+              cp -L /usr/lib64/libsharpyuv.so.* out/ 2>/dev/null || true
               ls -la out/
             '
 
@@ -319,6 +325,8 @@ jobs:
           cp -L "$BREW_PREFIX"/lib/libLerc.*.dylib       out/ 2>/dev/null || true
           cp -L "$BREW_PREFIX"/lib/libjbig.*.dylib       out/ 2>/dev/null || true
           cp -L "$BREW_PREFIX"/lib/libdeflate.*.dylib    out/ 2>/dev/null || true
+          # libsharpyuv is a transitive of libwebp itself (webp 1.3+)
+          cp -L "$BREW_PREFIX"/lib/libsharpyuv.*.dylib   out/ 2>/dev/null || true
           ls -la out/
 
       - uses: actions/upload-artifact@v4
@@ -374,6 +382,8 @@ jobs:
           cp -L "$BREW_PREFIX"/lib/libLerc.*.dylib       out/ 2>/dev/null || true
           cp -L "$BREW_PREFIX"/lib/libjbig.*.dylib       out/ 2>/dev/null || true
           cp -L "$BREW_PREFIX"/lib/libdeflate.*.dylib    out/ 2>/dev/null || true
+          # libsharpyuv is a transitive of libwebp itself (webp 1.3+)
+          cp -L "$BREW_PREFIX"/lib/libsharpyuv.*.dylib   out/ 2>/dev/null || true
           ls -la out/
 
       - uses: actions/upload-artifact@v4
