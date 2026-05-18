@@ -55,10 +55,21 @@ jobs:
           # set at build time means the loader will find them in the same
           # directory at runtime.
           LIB_DIR="/usr/lib/x86_64-linux-gnu"
-          cp -L "$LIB_DIR"/libjpeg.so.*  out/ 2>/dev/null || true
-          cp -L "$LIB_DIR"/libpng16.so.* out/ 2>/dev/null || true
-          cp -L "$LIB_DIR"/libtiff.so.*  out/ 2>/dev/null || true
-          cp -L "$LIB_DIR"/libz.so.*     out/ 2>/dev/null || true
+          # Core image codec deps (leptonica/tesseract direct deps)
+          cp -L "$LIB_DIR"/libjpeg.so.*     out/ 2>/dev/null || true
+          cp -L "$LIB_DIR"/libpng16.so.*    out/ 2>/dev/null || true
+          cp -L "$LIB_DIR"/libtiff.so.*     out/ 2>/dev/null || true
+          cp -L "$LIB_DIR"/libz.so.*        out/ 2>/dev/null || true
+          # Transitive deps pulled in by libtiff on modern Ubuntu (webp,
+          # zstd, lzma, Lerc, jbig, deflate). Bundling these prevents the
+          # same class of "missing libfoo on minimal container" failure
+          # one level deeper in the dependency graph.
+          cp -L "$LIB_DIR"/libwebp.so.*     out/ 2>/dev/null || true
+          cp -L "$LIB_DIR"/libzstd.so.*     out/ 2>/dev/null || true
+          cp -L "$LIB_DIR"/liblzma.so.*     out/ 2>/dev/null || true
+          cp -L "$LIB_DIR"/libLerc.so.*     out/ 2>/dev/null || true
+          cp -L "$LIB_DIR"/libjbig.so.*     out/ 2>/dev/null || true
+          cp -L "$LIB_DIR"/libdeflate.so.*  out/ 2>/dev/null || true
           ls -la out/
 
       - uses: actions/upload-artifact@v4
@@ -103,10 +114,17 @@ jobs:
               # Bundle transitive codec deps from the manylinux_2_28 container
               # (CentOS 8 family, libs in /usr/lib64). Same rationale as the
               # modern Linux job: minimal containers do not have these.
-              cp -L /usr/lib64/libjpeg.so.*  out/ 2>/dev/null || true
-              cp -L /usr/lib64/libpng16.so.* out/ 2>/dev/null || true
-              cp -L /usr/lib64/libtiff.so.*  out/ 2>/dev/null || true
-              cp -L /usr/lib64/libz.so.*     out/ 2>/dev/null || true
+              cp -L /usr/lib64/libjpeg.so.*     out/ 2>/dev/null || true
+              cp -L /usr/lib64/libpng16.so.*    out/ 2>/dev/null || true
+              cp -L /usr/lib64/libtiff.so.*     out/ 2>/dev/null || true
+              cp -L /usr/lib64/libz.so.*        out/ 2>/dev/null || true
+              # Transitive deps via libtiff on manylinux_2_28
+              cp -L /usr/lib64/libwebp.so.*     out/ 2>/dev/null || true
+              cp -L /usr/lib64/libzstd.so.*     out/ 2>/dev/null || true
+              cp -L /usr/lib64/liblzma.so.*     out/ 2>/dev/null || true
+              cp -L /usr/lib64/libLerc.so.*     out/ 2>/dev/null || true
+              cp -L /usr/lib64/libjbig.so.*     out/ 2>/dev/null || true
+              cp -L /usr/lib64/libdeflate.so.*  out/ 2>/dev/null || true
               ls -la out/
             '
 
@@ -215,10 +233,17 @@ jobs:
               cp -L "$PREFIX/lib/libtesseract.so.5" out/
               # Bundle transitive codec deps from the aarch64 manylinux_2_28
               # container (CentOS 8 family, libs in /usr/lib64).
-              cp -L /usr/lib64/libjpeg.so.*  out/ 2>/dev/null || true
-              cp -L /usr/lib64/libpng16.so.* out/ 2>/dev/null || true
-              cp -L /usr/lib64/libtiff.so.*  out/ 2>/dev/null || true
-              cp -L /usr/lib64/libz.so.*     out/ 2>/dev/null || true
+              cp -L /usr/lib64/libjpeg.so.*     out/ 2>/dev/null || true
+              cp -L /usr/lib64/libpng16.so.*    out/ 2>/dev/null || true
+              cp -L /usr/lib64/libtiff.so.*     out/ 2>/dev/null || true
+              cp -L /usr/lib64/libz.so.*        out/ 2>/dev/null || true
+              # Transitive deps via libtiff on manylinux_2_28
+              cp -L /usr/lib64/libwebp.so.*     out/ 2>/dev/null || true
+              cp -L /usr/lib64/libzstd.so.*     out/ 2>/dev/null || true
+              cp -L /usr/lib64/liblzma.so.*     out/ 2>/dev/null || true
+              cp -L /usr/lib64/libLerc.so.*     out/ 2>/dev/null || true
+              cp -L /usr/lib64/libjbig.so.*     out/ 2>/dev/null || true
+              cp -L /usr/lib64/libdeflate.so.*  out/ 2>/dev/null || true
               ls -la out/
             '
 
@@ -282,9 +307,18 @@ jobs:
           # Note: libz ships natively on macOS at /usr/lib/libz.dylib so no
           # bundling needed for it.
           BREW_PREFIX="$(brew --prefix)"
-          cp -L "$BREW_PREFIX"/lib/libjpeg.*.dylib    out/ 2>/dev/null || true
-          cp -L "$BREW_PREFIX"/lib/libpng16.*.dylib   out/ 2>/dev/null || true
-          cp -L "$BREW_PREFIX"/lib/libtiff.*.dylib    out/ 2>/dev/null || true
+          cp -L "$BREW_PREFIX"/lib/libjpeg.*.dylib       out/ 2>/dev/null || true
+          cp -L "$BREW_PREFIX"/lib/libpng16.*.dylib      out/ 2>/dev/null || true
+          cp -L "$BREW_PREFIX"/lib/libtiff.*.dylib       out/ 2>/dev/null || true
+          # Transitive deps via libtiff on homebrew (webp, zstd, lzma,
+          # Lerc, jbig, deflate). brew installs these as separate formulae
+          # under different names; copy what's present.
+          cp -L "$BREW_PREFIX"/lib/libwebp.*.dylib       out/ 2>/dev/null || true
+          cp -L "$BREW_PREFIX"/lib/libzstd.*.dylib       out/ 2>/dev/null || true
+          cp -L "$BREW_PREFIX"/lib/liblzma.*.dylib       out/ 2>/dev/null || true
+          cp -L "$BREW_PREFIX"/lib/libLerc.*.dylib       out/ 2>/dev/null || true
+          cp -L "$BREW_PREFIX"/lib/libjbig.*.dylib       out/ 2>/dev/null || true
+          cp -L "$BREW_PREFIX"/lib/libdeflate.*.dylib    out/ 2>/dev/null || true
           ls -la out/
 
       - uses: actions/upload-artifact@v4
@@ -328,9 +362,18 @@ jobs:
           # Same bundling as the x86_64 macOS job, but from the Apple
           # Silicon brew prefix. RPATH=@loader_path resolves at runtime.
           BREW_PREFIX="$(brew --prefix)"
-          cp -L "$BREW_PREFIX"/lib/libjpeg.*.dylib    out/ 2>/dev/null || true
-          cp -L "$BREW_PREFIX"/lib/libpng16.*.dylib   out/ 2>/dev/null || true
-          cp -L "$BREW_PREFIX"/lib/libtiff.*.dylib    out/ 2>/dev/null || true
+          cp -L "$BREW_PREFIX"/lib/libjpeg.*.dylib       out/ 2>/dev/null || true
+          cp -L "$BREW_PREFIX"/lib/libpng16.*.dylib      out/ 2>/dev/null || true
+          cp -L "$BREW_PREFIX"/lib/libtiff.*.dylib       out/ 2>/dev/null || true
+          # Transitive deps via libtiff on homebrew (webp, zstd, lzma,
+          # Lerc, jbig, deflate). brew installs these as separate formulae
+          # under different names; copy what's present.
+          cp -L "$BREW_PREFIX"/lib/libwebp.*.dylib       out/ 2>/dev/null || true
+          cp -L "$BREW_PREFIX"/lib/libzstd.*.dylib       out/ 2>/dev/null || true
+          cp -L "$BREW_PREFIX"/lib/liblzma.*.dylib       out/ 2>/dev/null || true
+          cp -L "$BREW_PREFIX"/lib/libLerc.*.dylib       out/ 2>/dev/null || true
+          cp -L "$BREW_PREFIX"/lib/libjbig.*.dylib       out/ 2>/dev/null || true
+          cp -L "$BREW_PREFIX"/lib/libdeflate.*.dylib    out/ 2>/dev/null || true
           ls -la out/
 
       - uses: actions/upload-artifact@v4
