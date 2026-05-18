@@ -47,6 +47,20 @@ jobs:
           cp -L "$PREFIX/lib/libleptonica.so.6" out/
           cp -L "$PREFIX/lib/libtesseract.so.5" out/
 
+      - name: Bundle transitive codec deps (jpeg, png, tiff, zlib)
+        run: |
+          # Bundle the system libs leptonica/tesseract linked against, so
+          # minimal containers (Ubuntu slim, Alpine, distroless) where these
+          # are not preinstalled can still load Legerix natives. RPATH=$ORIGIN
+          # set at build time means the loader will find them in the same
+          # directory at runtime.
+          LIB_DIR="/usr/lib/x86_64-linux-gnu"
+          cp -L "$LIB_DIR"/libjpeg.so.*  out/ 2>/dev/null || true
+          cp -L "$LIB_DIR"/libpng16.so.* out/ 2>/dev/null || true
+          cp -L "$LIB_DIR"/libtiff.so.*  out/ 2>/dev/null || true
+          cp -L "$LIB_DIR"/libz.so.*     out/ 2>/dev/null || true
+          ls -la out/
+
       - uses: actions/upload-artifact@v4
         with:
           name: linux-x86-64
@@ -86,6 +100,14 @@ jobs:
               mkdir -p out
               cp -L "$PREFIX/lib/libleptonica.so.6" out/
               cp -L "$PREFIX/lib/libtesseract.so.5" out/
+              # Bundle transitive codec deps from the manylinux_2_28 container
+              # (CentOS 8 family, libs in /usr/lib64). Same rationale as the
+              # modern Linux job: minimal containers do not have these.
+              cp -L /usr/lib64/libjpeg.so.*  out/ 2>/dev/null || true
+              cp -L /usr/lib64/libpng16.so.* out/ 2>/dev/null || true
+              cp -L /usr/lib64/libtiff.so.*  out/ 2>/dev/null || true
+              cp -L /usr/lib64/libz.so.*     out/ 2>/dev/null || true
+              ls -la out/
             '
 
       - name: Verify GLIBC compatibility (must be <= 2.28)
@@ -140,6 +162,18 @@ jobs:
           cp -L "$PREFIX/lib/libleptonica.so.6" out/
           cp -L "$PREFIX/lib/libtesseract.so.5" out/
 
+      - name: Bundle transitive codec deps (jpeg, png, tiff, zlib)
+        run: |
+          # Same bundling as the x86_64 modern job, but from the aarch64 lib
+          # directory. RPATH=$ORIGIN ensures runtime resolution from the
+          # extracted-natives directory.
+          LIB_DIR="/usr/lib/aarch64-linux-gnu"
+          cp -L "$LIB_DIR"/libjpeg.so.*  out/ 2>/dev/null || true
+          cp -L "$LIB_DIR"/libpng16.so.* out/ 2>/dev/null || true
+          cp -L "$LIB_DIR"/libtiff.so.*  out/ 2>/dev/null || true
+          cp -L "$LIB_DIR"/libz.so.*     out/ 2>/dev/null || true
+          ls -la out/
+
       - uses: actions/upload-artifact@v4
         with:
           name: linux-aarch64
@@ -179,6 +213,13 @@ jobs:
               mkdir -p out
               cp -L "$PREFIX/lib/libleptonica.so.6" out/
               cp -L "$PREFIX/lib/libtesseract.so.5" out/
+              # Bundle transitive codec deps from the aarch64 manylinux_2_28
+              # container (CentOS 8 family, libs in /usr/lib64).
+              cp -L /usr/lib64/libjpeg.so.*  out/ 2>/dev/null || true
+              cp -L /usr/lib64/libpng16.so.* out/ 2>/dev/null || true
+              cp -L /usr/lib64/libtiff.so.*  out/ 2>/dev/null || true
+              cp -L /usr/lib64/libz.so.*     out/ 2>/dev/null || true
+              ls -la out/
             '
 
       - name: Verify GLIBC compatibility (must be <= 2.28)
@@ -232,6 +273,20 @@ jobs:
           cp -L "$PREFIX/lib/libleptonica.6.dylib" out/
           cp -L "$PREFIX/lib/libtesseract.5.dylib" out/
 
+      - name: Bundle transitive codec deps from homebrew
+        run: |
+          # Bundle the homebrew dylibs leptonica/tesseract linked against,
+          # so users without those brew formulae installed can still load
+          # Legerix. RPATH=@loader_path set at build time resolves these
+          # at runtime from the same directory as libtesseract.
+          # Note: libz ships natively on macOS at /usr/lib/libz.dylib so no
+          # bundling needed for it.
+          BREW_PREFIX="$(brew --prefix)"
+          cp -L "$BREW_PREFIX"/lib/libjpeg.*.dylib    out/ 2>/dev/null || true
+          cp -L "$BREW_PREFIX"/lib/libpng16.*.dylib   out/ 2>/dev/null || true
+          cp -L "$BREW_PREFIX"/lib/libtiff.*.dylib    out/ 2>/dev/null || true
+          ls -la out/
+
       - uses: actions/upload-artifact@v4
         with:
           name: darwin
@@ -267,6 +322,16 @@ jobs:
           mkdir -p out
           cp -L "$PREFIX/lib/libleptonica.6.dylib" out/
           cp -L "$PREFIX/lib/libtesseract.5.dylib" out/
+
+      - name: Bundle transitive codec deps from homebrew
+        run: |
+          # Same bundling as the x86_64 macOS job, but from the Apple
+          # Silicon brew prefix. RPATH=@loader_path resolves at runtime.
+          BREW_PREFIX="$(brew --prefix)"
+          cp -L "$BREW_PREFIX"/lib/libjpeg.*.dylib    out/ 2>/dev/null || true
+          cp -L "$BREW_PREFIX"/lib/libpng16.*.dylib   out/ 2>/dev/null || true
+          cp -L "$BREW_PREFIX"/lib/libtiff.*.dylib    out/ 2>/dev/null || true
+          ls -la out/
 
       - uses: actions/upload-artifact@v4
         with:
@@ -388,14 +453,20 @@ jobs:
         run: |
           echo "=== Natives staged ==="
           find src/main/resources -type f \( -name "*.so*" -o -name "*.dylib" -o -name "*.dll" \) | sort
-          # Linux + macOS: 2 libs * 6 platforms = 12. Windows: variable (every
-          # vcpkg DLL), so just assert >= 1. Total >= 13.
-          UNIX_COUNT=$(find src/main/resources -type f \( -name "*.so*" -o -name "*.dylib" \) | wc -l)
+          # Each Linux/macOS tier must ship at least the core 2 libs
+          # (leptonica + tesseract). Transitive codec deps (libjpeg, libpng,
+          # libtiff, libz) are bundled on top when present on the build
+          # system, so total per tier is >= 2 (not a strict count).
+          # Windows: variable (every vcpkg DLL), so just assert >= 2.
+          for TIER in linux-x86-64 linux-x86-64-legacy linux-aarch64 linux-aarch64-legacy darwin darwin-aarch64; do
+            COUNT=$(find "src/main/resources/$TIER" -type f \( -name "*.so*" -o -name "*.dylib" \) | wc -l)
+            if [ "$COUNT" -lt 2 ]; then
+              echo "ERROR: $TIER has only $COUNT native(s), expected at least 2 (leptonica + tesseract)"
+              exit 1
+            fi
+            echo "OK: $TIER has $COUNT natives"
+          done
           WIN_COUNT=$(find src/main/resources/win32-x86-64 -type f -name "*.dll" | wc -l)
-          if [ "$UNIX_COUNT" -ne 12 ]; then
-            echo "ERROR: expected 12 Linux+macOS natives, found $UNIX_COUNT"
-            exit 1
-          fi
           if [ "$WIN_COUNT" -lt 2 ]; then
             echo "ERROR: expected at least 2 Windows DLLs (tesseract+leptonica), found $WIN_COUNT"
             exit 1
@@ -404,7 +475,55 @@ jobs:
             test -f "src/main/resources/tessdata/${lang}.traineddata" \
               || { echo "ERROR: missing tessdata/${lang}.traineddata"; exit 1; }
           done
-          echo "OK: 12 Linux/macOS natives + $WIN_COUNT Windows DLLs + 5 traineddata files"
+          echo "OK: all 6 Unix tiers + $WIN_COUNT Windows DLLs + 5 traineddata files"
+
+      - name: Verify NEEDED entries (Linux tiers only)
+        run: |
+          # Sanity check: every NEEDED entry in Linux .so files must either
+          # be a standard glibc/musl lib OR be present in the same tier
+          # directory. Catches future regressions where build deps drift
+          # and an unexpected lib slips into the binary without being
+          # bundled.
+          set +e
+          STANDARD_LIBS="libc.so libdl.so libm.so libpthread.so librt.so libstdc\\+\\+.so libgcc_s.so ld-linux"
+          OVERALL_OK=true
+          for TIER_DIR in src/main/resources/linux-*; do
+            TIER=$(basename "$TIER_DIR")
+            echo "=== $TIER ==="
+            for SO in "$TIER_DIR"/*.so*; do
+              echo "--- $(basename $SO) ---"
+              NEEDED=$(readelf -d "$SO" 2>/dev/null | grep NEEDED | grep -oE '\[[^]]+\]' | tr -d '[]')
+              for LIB in $NEEDED; do
+                # Check if standard glibc lib
+                IS_STD=false
+                for STD in $STANDARD_LIBS; do
+                  if echo "$LIB" | grep -qE "^${STD}"; then
+                    IS_STD=true
+                    break
+                  fi
+                done
+                if [ "$IS_STD" = true ]; then
+                  echo "  STD     $LIB"
+                  continue
+                fi
+                # Check if present in same tier
+                if [ -f "$TIER_DIR/$LIB" ]; then
+                  echo "  BUNDLED $LIB"
+                else
+                  echo "  MISSING $LIB (not standard and not bundled)"
+                  OVERALL_OK=false
+                fi
+              done
+            done
+          done
+          if [ "$OVERALL_OK" != true ]; then
+            echo ""
+            echo "ERROR: at least one Linux native has an unresolved NEEDED entry."
+            echo "Either bundle the missing lib in the corresponding tier, or"
+            echo "add it to the STANDARD_LIBS allowlist if it is a true OS-level dep."
+            exit 1
+          fi
+          echo "OK: all Linux NEEDED entries are either standard or bundled."
 
       - name: Build and test
         run: mvn -B install

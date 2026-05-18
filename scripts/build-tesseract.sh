@@ -24,8 +24,16 @@ echo "==> Bootstrapping autotools"
 ./autogen.sh
 
 echo "==> Configuring tesseract"
+# RPATH so libtesseract finds its transitive codec deps (libjpeg, libpng,
+# libtiff, libz) and libleptonica in the same directory at runtime.
+# Linux: $ORIGIN, macOS: @loader_path. Without this, minimal containers
+# and brew-less machines crash on dlopen.
+case "$(uname -s)" in
+    Darwin) RPATH_FLAG="-Wl,-rpath,@loader_path" ;;
+    *)      RPATH_FLAG="-Wl,-rpath,\$ORIGIN" ;;
+esac
 PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig" \
-LDFLAGS="-L$PREFIX/lib -Wl,-rpath,\$ORIGIN" \
+LDFLAGS="-L$PREFIX/lib $RPATH_FLAG" \
 CPPFLAGS="-I$PREFIX/include" \
 ./configure \
     --prefix="$PREFIX" \
