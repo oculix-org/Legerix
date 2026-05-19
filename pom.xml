@@ -101,6 +101,29 @@
 	</developers>
 
 	<build>
+		<pluginManagement>
+			<plugins>
+				<!-- Pin core plugins to Maven 3.x-compatible versions so the
+				     build is deterministic regardless of the local Maven
+				     version. Without this, Maven 3.x without auto-fallback
+				     picks maven-resources-plugin:4.0.0-beta-1 (Maven 4-only)
+				     and crashes with NoSuchMethodError on ProjectManager.
+				     The CI runs on Maven 3.9.15 which does fallback, but
+				     older local Maven versions do not. -->
+				<plugin>
+					<artifactId>maven-resources-plugin</artifactId>
+					<version>3.5.0</version>
+				</plugin>
+				<plugin>
+					<artifactId>maven-install-plugin</artifactId>
+					<version>3.1.4</version>
+				</plugin>
+				<plugin>
+					<artifactId>maven-deploy-plugin</artifactId>
+					<version>3.1.4</version>
+				</plugin>
+			</plugins>
+		</pluginManagement>
 		<plugins>
 			<plugin>
 				<groupId>org.codehaus.mojo</groupId>

@@ -115,7 +115,7 @@ fetch_and_cd() {
 build_zlib() {
     [ -f "$STATIC_PREFIX/lib/libz.a" ] && return
     echo "==> zlib"
-    fetch_and_cd "https://www.zlib.net/zlib-${ZLIB_VERSION}.tar.gz" "zlib-${ZLIB_VERSION}"
+    fetch_and_cd "https://github.com/madler/zlib/releases/download/v${ZLIB_VERSION}/zlib-${ZLIB_VERSION}.tar.gz" "zlib-${ZLIB_VERSION}"
     CFLAGS="-O2 -fPIC" ./configure --prefix="$STATIC_PREFIX" --static
     make -j"$JOBS"; make install
 }
@@ -292,6 +292,9 @@ for t in "${ALL_TIERS[@]}"; do
 done
 
 # ---- tessdata (lightweight language models) ----
+# Defuse Windows CRLF on the existing script (the repo was likely cloned with
+# autocrlf=true and WSL bash chokes on \r\n line endings).
+sed -i 's/\r$//' "$REPO_ROOT/scripts/fetch-traineddata.sh"
 bash "$REPO_ROOT/scripts/fetch-traineddata.sh" "$REPO_ROOT/src/main/resources/tessdata"
 
 echo ""
