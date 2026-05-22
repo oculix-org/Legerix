@@ -673,19 +673,28 @@ jobs:
           # Fat jar (contains every platform's natives + tessdata).
           cp dist/legerix-${VERSION}.jar release-assets/
 
-          # One zip per tier, containing the FULL native payload for that tier:
-          # libleptonica + libtesseract AND every bundled codec dep (libjpeg,
-          # libpng, libtiff, libz, ...). This pattern was previously used only
-          # for Windows; we now apply it to every tier so publish-maven-central
-          # can unzip each into src/main/resources/<tier>/ and the Maven Central
-          # jar carries the codecs too — not just the 2 core libs.
-          #
-          # #350 fix: previously only leptonica+tesseract were uploaded as
-          # individual assets, so the Maven Central jar shipped WITHOUT libjpeg
-          # and crashed on hosts lacking it (e.g. Ubuntu 22, Alpine, distroless).
-          for TIER in linux-x86-64 linux-x86-64-legacy linux-aarch64 linux-aarch64-legacy darwin darwin-aarch64 win32-x86-64; do
-            ( cd "$TIER" && zip -r "../release-assets/legerix-${TIER}.zip" . -x ".gitkeep" )
-          done
+          # Raw natives, one file per platform per lib, suffixed with the
+          # platform tag in the basename. Same convention as Apertix.
+          # Linux .so
+          cp linux-x86-64/libtesseract.so.5         release-assets/libtesseract.so.5-linux-x86-64
+          cp linux-x86-64/libleptonica.so.6         release-assets/libleptonica.so.6-linux-x86-64
+          cp linux-x86-64-legacy/libtesseract.so.5  release-assets/libtesseract.so.5-linux-x86-64-legacy
+          cp linux-x86-64-legacy/libleptonica.so.6  release-assets/libleptonica.so.6-linux-x86-64-legacy
+          cp linux-aarch64/libtesseract.so.5        release-assets/libtesseract.so.5-linux-aarch64
+          cp linux-aarch64/libleptonica.so.6        release-assets/libleptonica.so.6-linux-aarch64
+          cp linux-aarch64-legacy/libtesseract.so.5 release-assets/libtesseract.so.5-linux-aarch64-legacy
+          cp linux-aarch64-legacy/libleptonica.so.6 release-assets/libleptonica.so.6-linux-aarch64-legacy
+          # macOS .dylib
+          cp darwin/libtesseract.5.dylib            release-assets/libtesseract.5-darwin.dylib
+          cp darwin/libleptonica.6.dylib            release-assets/libleptonica.6-darwin.dylib
+          cp darwin-aarch64/libtesseract.5.dylib    release-assets/libtesseract.5-darwin-aarch64.dylib
+          cp darwin-aarch64/libleptonica.6.dylib    release-assets/libleptonica.6-darwin-aarch64.dylib
+          # Windows: bundle every DLL (tesseract + leptonica + ~10 transitive
+          # codec/runtime deps from vcpkg) as a single zip asset. Individual
+          # DLLs are no longer uploaded because end consumers need the full
+          # set or none at all (any missing transitive triggers
+          # UnsatisfiedLinkError at runtime).
+          ( cd win32-x86-64 && zip -r ../release-assets/legerix-win-x86-64.zip . -x ".gitkeep" )
 
           ls -lh release-assets/
 
