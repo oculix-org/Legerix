@@ -101,7 +101,7 @@ jobs:
           echo "TESSERACT_VERSION=$(mvn build-helper:parse-version org.apache.maven.plugins:maven-help-plugin:3.2.0:evaluate -Dexpression=tesseract.version.long -q -DforceStdout)" >> $GITHUB_ENV
           echo "LEPTONICA_VERSION=$(mvn build-helper:parse-version org.apache.maven.plugins:maven-help-plugin:3.2.0:evaluate -Dexpression=leptonica.version -q -DforceStdout)" >> $GITHUB_ENV
 
-      - name: Build in manylinux_2_28 (x86_64)
+      - name: Build self-contained (static codecs) in manylinux_2_28 (x86_64)
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/io -w /io \
@@ -109,37 +109,27 @@ jobs:
             -e LEPTONICA_VERSION=${{ env.LEPTONICA_VERSION }} \
             quay.io/pypa/manylinux_2_28_x86_64 \
             /bin/bash -ec '
+              # The legacy tier (Ubuntu 22 / glibc 2.35, no system libjpeg.so.62)
+              # is the only one affected by #350. Build it STATICALLY here:
+              # build-self-contained-local.sh statically links every codec
+              # (jpeg/png/tiff/webp/zstd/lzma/deflate/zlib) INTO libleptonica.so.6
+              # and libtesseract.so.5, so the resulting .so have NO DT_NEEDED on
+              # libjpeg etc. -> they load on any host, no bundling/RPATH tricks.
               yum install -y -q \
-                libpng-devel libjpeg-turbo-devel libtiff-devel zlib-devel \
-                libwebp-devel libzstd-devel xz-devel libdeflate-devel jbigkit-devel \
-                autoconf automake libtool pkgconfig curl
-              # libLerc not in CentOS 8 stream repos — libtiff on this
-              # platform was built older without LERC support, so it is
-              # not referenced as a NEEDED. Same for libsharpyuv (webp 1.3+
-              # is too recent for manylinux_2_28 — the bundled webp is older).
-              PREFIX=/io/_legacy-prefix
-              mkdir -p "$PREFIX"
-              ./scripts/build-leptonica.sh "$LEPTONICA_VERSION" "$PREFIX"
-              ./scripts/build-tesseract.sh "$TESSERACT_VERSION" "$PREFIX"
+                cmake nasm autoconf automake libtool pkgconfig \
+                curl tar gzip make gcc gcc-c++
+              bash ./scripts/build-self-contained-local.sh
               mkdir -p out
-              cp -L "$PREFIX/lib/libleptonica.so.6" out/
-              cp -L "$PREFIX/lib/libtesseract.so.5" out/
-              # Bundle transitive codec deps from the manylinux_2_28 container
-              # (CentOS 8 family, libs in /usr/lib64). Same rationale as the
-              # modern Linux job: minimal containers do not have these.
-              cp -L /usr/lib64/libjpeg.so.*     out/ 2>/dev/null || true
-              cp -L /usr/lib64/libpng16.so.*    out/ 2>/dev/null || true
-              cp -L /usr/lib64/libtiff.so.*     out/ 2>/dev/null || true
-              cp -L /usr/lib64/libz.so.*        out/ 2>/dev/null || true
-              # Transitive deps via libtiff on manylinux_2_28
-              cp -L /usr/lib64/libwebp.so.*     out/ 2>/dev/null || true
-              cp -L /usr/lib64/libzstd.so.*     out/ 2>/dev/null || true
-              cp -L /usr/lib64/liblzma.so.*     out/ 2>/dev/null || true
-              cp -L /usr/lib64/libLerc.so.*     out/ 2>/dev/null || true
-              cp -L /usr/lib64/libjbig.so.*     out/ 2>/dev/null || true
-              cp -L /usr/lib64/libdeflate.so.*  out/ 2>/dev/null || true
-              # libsharpyuv is a transitive of libwebp itself (webp 1.3+)
-              cp -L /usr/lib64/libsharpyuv.so.* out/ 2>/dev/null || true
+              cp -L src/main/resources/linux-x86-64-legacy/libleptonica.so.6 out/
+              cp -L src/main/resources/linux-x86-64-legacy/libtesseract.so.5 out/
+              # Guardrail: the .so MUST NOT carry any codec lib in DT_NEEDED.
+              echo "=== NEEDED of libtesseract.so.5 (no codec expected) ==="
+              readelf -d out/libtesseract.so.5 | grep NEEDED || true
+              if readelf -d out/libtesseract.so.5 out/libleptonica.so.6 | grep -qE "NEEDED.*(libjpeg|libpng|libtiff|libwebp|libzstd|liblzma|libdeflate)"; then
+                echo "ERROR: static link failed — a codec is still in DT_NEEDED (#350 would reproduce)"
+                exit 1
+              fi
+              echo "OK: legacy x86-64 natives are self-contained (no codec DT_NEEDED)"
               ls -la out/
             '
 
