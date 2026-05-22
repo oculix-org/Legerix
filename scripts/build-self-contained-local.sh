@@ -141,6 +141,7 @@ build_libjpeg_turbo() {
     fetch_and_cd "https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/${LIBJPEG_TURBO_VERSION}/libjpeg-turbo-${LIBJPEG_TURBO_VERSION}.tar.gz" "libjpeg-turbo-${LIBJPEG_TURBO_VERSION}"
     rm -rf build && mkdir build && cd build
     cmake .. -DCMAKE_INSTALL_PREFIX="$STATIC_PREFIX" \
+             -DCMAKE_INSTALL_LIBDIR=lib \
              -DENABLE_STATIC=ON -DENABLE_SHARED=OFF \
              -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
              -DCMAKE_BUILD_TYPE=Release
@@ -171,6 +172,7 @@ build_libdeflate() {
     fetch_and_cd "https://github.com/ebiggers/libdeflate/releases/download/v${LIBDEFLATE_VERSION}/libdeflate-${LIBDEFLATE_VERSION}.tar.gz" "libdeflate-${LIBDEFLATE_VERSION}"
     rm -rf build && mkdir build && cd build
     cmake .. -DCMAKE_INSTALL_PREFIX="$STATIC_PREFIX" \
+             -DCMAKE_INSTALL_LIBDIR=lib \
              -DLIBDEFLATE_BUILD_STATIC_LIB=ON -DLIBDEFLATE_BUILD_SHARED_LIB=OFF \
              -DLIBDEFLATE_BUILD_GZIP=OFF \
              -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
