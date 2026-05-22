@@ -34,35 +34,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p assets
-          # *.so.* / *.dylib for Linux + macOS individual files;
-          # *.zip picks up legerix-win-x86-64.zip (full vcpkg DLL set).
-          gh release download "$RELEASE_TAG" --dir assets --pattern '*.so.*' --pattern '*.dylib' --pattern '*.zip'
+          # One zip per tier (legerix-<tier>.zip): leptonica + tesseract +
+          # bundled codec deps (libjpeg, libpng, libtiff, libz, ...).
+          gh release download "$RELEASE_TAG" --dir assets --pattern 'legerix-*.zip'
           ls -la assets/
 
       - name: Stage natives into src/main/resources
         run: |
-          mkdir -p src/main/resources/linux-x86-64 \
-                   src/main/resources/linux-x86-64-legacy \
-                   src/main/resources/linux-aarch64 \
-                   src/main/resources/linux-aarch64-legacy \
-                   src/main/resources/darwin \
-                   src/main/resources/darwin-aarch64 \
-                   src/main/resources/win32-x86-64
-
-          cp assets/libtesseract.so.5-linux-x86-64           src/main/resources/linux-x86-64/libtesseract.so.5
-          cp assets/libleptonica.so.6-linux-x86-64           src/main/resources/linux-x86-64/libleptonica.so.6
-          cp assets/libtesseract.so.5-linux-x86-64-legacy    src/main/resources/linux-x86-64-legacy/libtesseract.so.5
-          cp assets/libleptonica.so.6-linux-x86-64-legacy    src/main/resources/linux-x86-64-legacy/libleptonica.so.6
-          cp assets/libtesseract.so.5-linux-aarch64          src/main/resources/linux-aarch64/libtesseract.so.5
-          cp assets/libleptonica.so.6-linux-aarch64          src/main/resources/linux-aarch64/libleptonica.so.6
-          cp assets/libtesseract.so.5-linux-aarch64-legacy   src/main/resources/linux-aarch64-legacy/libtesseract.so.5
-          cp assets/libleptonica.so.6-linux-aarch64-legacy   src/main/resources/linux-aarch64-legacy/libleptonica.so.6
-          cp assets/libtesseract.5-darwin.dylib              src/main/resources/darwin/libtesseract.5.dylib
-          cp assets/libleptonica.6-darwin.dylib              src/main/resources/darwin/libleptonica.6.dylib
-          cp assets/libtesseract.5-darwin-aarch64.dylib      src/main/resources/darwin-aarch64/libtesseract.5.dylib
-          cp assets/libleptonica.6-darwin-aarch64.dylib      src/main/resources/darwin-aarch64/libleptonica.6.dylib
-          # Windows: unzip the full vcpkg DLL bundle into the resource dir.
-          unzip -o assets/legerix-win-x86-64.zip -d src/main/resources/win32-x86-64/
+          # Each legerix-<tier>.zip carries that tier's full native payload
+          # (leptonica + tesseract + bundled codecs). Unzip each into its
+          # resource dir — identical to publish-maven-central.yml.
+          for TIER in linux-x86-64 linux-x86-64-legacy linux-aarch64 linux-aarch64-legacy darwin darwin-aarch64 win32-x86-64; do
+            mkdir -p "src/main/resources/$TIER"
+            unzip -o "assets/legerix-${TIER}.zip" -d "src/main/resources/$TIER/"
+          done
 
       - name: Fetch traineddata (5 bundled languages)
         run: bash ./scripts/fetch-traineddata.sh src/main/resources/tessdata
@@ -71,12 +56,20 @@ jobs:
         run: |
           echo "=== Natives staged ==="
           find src/main/resources -type f \( -name "*.so*" -o -name "*.dylib" -o -name "*.dll" \) | sort
-          UNIX_COUNT=$(find src/main/resources -type f \( -name "*.so*" -o -name "*.dylib" \) | wc -l)
+          # With bundled codecs each Unix tier now has >= 2 files (not a fixed 12).
+          for TIER in linux-x86-64 linux-x86-64-legacy linux-aarch64 linux-aarch64-legacy darwin darwin-aarch64; do
+            COUNT=$(find "src/main/resources/$TIER" -type f \( -name "*.so*" -o -name "*.dylib" \) | wc -l)
+            if [ "$COUNT" -lt 2 ]; then
+              echo "ERROR: $TIER has only $COUNT native(s), expected >= 2 (leptonica + tesseract)"
+              exit 1
+            fi
+          done
+          # #350 guard: libjpeg MUST be bundled in every Linux tier.
+          for TIER in linux-x86-64 linux-x86-64-legacy linux-aarch64 linux-aarch64-legacy; do
+            ls src/main/resources/$TIER/libjpeg.so.* >/dev/null 2>&1 \
+              || { echo "ERROR: $TIER is missing bundled libjpeg (issue #350 regression)"; exit 1; }
+          done
           WIN_COUNT=$(find src/main/resources/win32-x86-64 -type f -name "*.dll" | wc -l)
-          if [ "$UNIX_COUNT" -ne 12 ]; then
-            echo "ERROR: expected 12 Linux+macOS natives, found $UNIX_COUNT"
-            exit 1
-          fi
           if [ "$WIN_COUNT" -lt 2 ]; then
             echo "ERROR: expected at least 2 Windows DLLs, found $WIN_COUNT"
             exit 1
@@ -85,7 +78,7 @@ jobs:
             test -f "src/main/resources/tessdata/${lang}.traineddata" \
               || { echo "ERROR: missing tessdata/${lang}.traineddata"; exit 1; }
           done
-          echo "OK: 12 Linux/macOS natives + $WIN_COUNT Windows DLLs + 5 traineddata files"
+          echo "OK: all Unix tiers carry leptonica+tesseract+libjpeg, $WIN_COUNT Windows DLLs, 5 traineddata files"
 
       - name: Maven verify (compile + bundle + sources + javadoc + GPG sign)
         run: mvn -B verify -P release -DskipTests
@@ -99,14 +92,22 @@ jobs:
           ls -la target/legerix-*.jar target/legerix-*.jar.asc 2>/dev/null || true
           echo "=== Natives + tessdata inside the jar ==="
           unzip -l "$JAR" | grep -E '\.(so|dll|dylib|traineddata)' | sort
-          UNIX_PAYLOAD=$(unzip -l "$JAR" | grep -E '(^|[[:space:]])(linux|darwin)[^/]*/[^/]+\.(so\.|dylib)' | wc -l)
           WIN_PAYLOAD=$(unzip -l "$JAR" | grep -E '(^|[[:space:]])win32-x86-64/[^/]+\.dll$' | wc -l)
           TRAINED_PAYLOAD=$(unzip -l "$JAR" | grep -E '(^|[[:space:]])tessdata/[^/]+\.traineddata$' | wc -l)
-          echo "Payload: $UNIX_PAYLOAD Linux+macOS natives, $WIN_PAYLOAD Windows DLLs, $TRAINED_PAYLOAD traineddata"
-          if [ "$UNIX_PAYLOAD" -ne 12 ] || [ "$WIN_PAYLOAD" -lt 2 ] || [ "$TRAINED_PAYLOAD" -ne 5 ]; then
-            echo "ERROR: jar payload mismatch"
+          echo "Windows DLLs: $WIN_PAYLOAD, traineddata: $TRAINED_PAYLOAD"
+          if [ "$WIN_PAYLOAD" -lt 2 ] || [ "$TRAINED_PAYLOAD" -ne 5 ]; then
+            echo "ERROR: jar payload mismatch (windows / tessdata)"
             exit 1
           fi
+          # === THE #350 proof ===
+          # libjpeg MUST be present inside the produced jar for every Linux
+          # tier. This is the direct evidence — on the actual artifact, before
+          # any deploy — that the Maven Central jar will load on Ubuntu 22.
+          for TIER in linux-x86-64 linux-x86-64-legacy linux-aarch64 linux-aarch64-legacy; do
+            unzip -l "$JAR" | grep -qE "${TIER}/libjpeg\.so\." \
+              || { echo "ERROR: jar is MISSING ${TIER}/libjpeg.so.* (issue #350 would reproduce)"; exit 1; }
+            echo "OK: jar carries ${TIER}/libjpeg"
+          done
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
