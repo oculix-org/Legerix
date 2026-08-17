@@ -52,3 +52,19 @@ make install
 echo "==> Tesseract installed to $PREFIX"
 "$PREFIX/bin/tesseract" --version || true
 ls -lh "$PREFIX/lib/" | grep -E 'tesseract' || true
+
+# On Linux, libtool corrupts $ORIGIN in RUNPATH — the leading $O gets consumed
+# somewhere in the configure/libtool pipeline and the recorded RUNPATH becomes
+# the literal string "RIGIN", plus the absolute CI build prefix. Both are
+# unresolvable on the user's machine. Post-fix with patchelf: replace whatever
+# libtool wrote with a pure "$ORIGIN" so libtesseract.so.5 resolves its sibling
+# libleptonica.so.6 from the same directory at runtime, regardless of how the
+# bundle is extracted.
+if [ "$(uname -s)" != "Darwin" ] && command -v patchelf >/dev/null 2>&1; then
+    for so in "$PREFIX/lib/libtesseract.so."*; do
+        if [ -f "$so" ] && [ ! -L "$so" ]; then
+            patchelf --set-rpath '$ORIGIN' "$so"
+            echo "==> patchelf --set-rpath '\$ORIGIN' $so"
+        fi
+    done
+fi
