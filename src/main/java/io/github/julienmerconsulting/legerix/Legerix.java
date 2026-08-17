@@ -225,22 +225,27 @@ public final class Legerix {
             }
         }
 
-        // Load via JNA's NativeLibrary.getInstance() instead of System.load().
-        // This matters because:
-        //   1. JNA loads with RTLD_GLOBAL on Linux/macOS, so leptonica's
-        //      symbols (e.g. pixFindBaselinesGen, introduced in 1.85) become
-        //      globally visible. Otherwise tess4j later loads its own older
-        //      leptonica RTLD_GLOBAL and that one shadows ours, breaking
-        //      tesseract 5.5+ which calls those new functions.
-        //   2. JNA caches the NativeLibrary by name. When tess4j subsequently
-        //      calls Native.loadLibrary("tesseract"), it gets OUR cached
-        //      handle instead of triggering its own classpath extraction.
-        //
-        // Order matters: leptonica first (tesseract.so DT_NEEDED depends on
-        // libleptonica.so.6, and we want OUR copy registered globally before
-        // the dynamic linker resolves that dep).
-        loadViaJna("leptonica", target, leptonicaFileName(os));
-        loadViaJna("tesseract", target, tesseractFileName(os));
+        // Load OUR bundled files by absolute path, in dependency order.
+        // Absolute path bypasses short-name resolution entirely — no system
+        // library can shadow ours. Order matters: leptonica first, so that
+        // tesseract's NEEDED libleptonica.so.6 is already mapped when the
+        // dynamic linker walks tesseract's dependencies (which sidesteps
+        // any RUNPATH corruption that libtool may have produced at build
+        // time and any LC_ID_DYLIB pointing at the CI runner on macOS).
+        System.load(target.resolve(leptonicaFileName(os)).toAbsolutePath().toString());
+        System.load(target.resolve(tesseractFileName(os)).toAbsolutePath().toString());
+
+        // Verify what actually loaded matches what we shipped. Skipped on
+        // Windows: the assertion goes through Native.load("tesseract") which
+        // resolves to the short name "tesseract.dll" — but the Windows payload
+        // ships "tesseract55.dll" (vcpkg convention). Windows is also not
+        // affected by the silent-system-binding failure mode that this check
+        // was designed to catch: tess4j on Windows extracts and loads its own
+        // versioned name from %TEMP%\tess4j\ by absolute path, so no system
+        // library can shadow the bundled one.
+        if (os != OS.WINDOWS) {
+            assertBundledTesseract();
+        }
 
         extractionDir = target;
         loaded = true;
@@ -486,27 +491,37 @@ public final class Legerix {
         boolean SetDllDirectoryW(WString lpPathName);
     }
 
+    // Minimal JNA binding to libtesseract's TessVersion(). Used post-load to
+    // verify that the library actually mapped into the process is the one
+    // this artifact shipped, not a system Tesseract that sneaked in.
+    private interface TessNative extends com.sun.jna.Library {
+        String TessVersion();
+    }
+
     /**
-     * Load a library via JNA (RTLD_GLOBAL on Linux/macOS) so symbols are
-     * visible to the rest of the process and JNA caches the handle by name.
-     * If JNA can't resolve the name (e.g. because the on-disk file uses a
-     * versioned name JNA's regex doesn't match), fall back to a direct
-     * dlopen-by-path via System.load so we still load *something*.
+     * Read {@code TessVersion()} on whatever libtesseract is currently loaded
+     * for JNA and expose it. Package-private so tests can compare against
+     * {@link #getTesseractVersion()} and prove that no silent system-library
+     * binding took place.
      */
-    private static void loadViaJna(final String jnaName, final Path dir, final String fileName) {
-        try {
-            NativeLibrary.getInstance(jnaName);
-            return;
-        } catch (final UnsatisfiedLinkError e) {
-            logger.log(Level.FINE, "JNA could not resolve \"" + jnaName + "\" by name, "
-                    + "falling back to System.load on the absolute file path", e);
-        }
-        final Path p = dir.resolve(fileName);
-        try {
-            System.load(p.toAbsolutePath().toString());
-        } catch (final UnsatisfiedLinkError e) {
-            logger.log(Level.SEVERE, "Failed to load native library " + p, e);
-            throw e;
+    static String getLoadedTesseractVersion() {
+        return Native.load("tesseract", TessNative.class).TessVersion();
+    }
+
+    /**
+     * Fail loudly at startup if the loaded Tesseract is not the bundled one.
+     * Prevents the silent-system-binding failure mode where OCR runs happily
+     * against a wrong version — reported by users hours or days later as
+     * "the output doesn't match what my colleague gets".
+     */
+    private static void assertBundledTesseract() {
+        final String actual = getLoadedTesseractVersion();
+        final String bundled = getTesseractVersion();
+        if (actual == null || !actual.startsWith(bundled)) {
+            throw new IllegalStateException(
+                    "Legerix loaded the wrong Tesseract: expected " + bundled
+                            + " (bundled) but TessVersion() reports " + actual
+                            + ". A system Tesseract may have been resolved ahead of the bundled library.");
         }
     }
 }
