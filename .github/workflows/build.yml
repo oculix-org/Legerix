@@ -41,7 +41,7 @@ jobs:
             build-essential autoconf automake libtool pkg-config \
             libpng-dev libjpeg-dev libtiff-dev zlib1g-dev \
             libwebp-dev libzstd-dev liblzma-dev liblerc-dev libjbig-dev libdeflate-dev \
-            curl
+            curl patchelf
 
       - name: Build leptonica + tesseract
         run: |
@@ -179,7 +179,7 @@ jobs:
             build-essential autoconf automake libtool pkg-config \
             libpng-dev libjpeg-dev libtiff-dev zlib1g-dev \
             libwebp-dev libzstd-dev liblzma-dev liblerc-dev libjbig-dev libdeflate-dev \
-            curl
+            curl patchelf
 
       - name: Build leptonica + tesseract
         run: |
