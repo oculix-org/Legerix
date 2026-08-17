@@ -336,6 +336,31 @@ jobs:
           cp -L "$PREFIX/lib/libleptonica.6.dylib" out/
           cp -L "$PREFIX/lib/libtesseract.5.dylib" out/
 
+      - name: Rewrite install names + codesign (relocatable dylibs)
+        run: |
+          # From David Young's rapport Legerix#20 (RC2, RC3):
+          # - Fresh-built dylibs record LC_ID_DYLIB = $PREFIX/lib/... (the CI
+          #   runner path) and libtesseract's dependency on libleptonica points
+          #   at the same absolute prefix. Neither exists on a user's machine.
+          # - install_name_tool -id + -change makes both self-relative via
+          #   @loader_path so dyld resolves them from wherever Legerix extracts.
+          # - codesign is required on arm64 after install_name_tool touches the
+          #   Mach-O; without it dyld rejects the modified binary.
+          install_name_tool -id "@loader_path/libleptonica.6.dylib" out/libleptonica.6.dylib
+          install_name_tool -id "@loader_path/libtesseract.5.dylib" out/libtesseract.5.dylib
+          install_name_tool -change "$RUNNER_TEMP/legerix-prefix/lib/libleptonica.6.dylib" \
+                                    "@loader_path/libleptonica.6.dylib" \
+                                    out/libtesseract.5.dylib
+          codesign -f -s - out/libleptonica.6.dylib
+          codesign -f -s - out/libtesseract.5.dylib
+
+          # RC3: expose unversioned aliases so tess4j's Native.load("tesseract")
+          # matches without going through the Legerix loader. Redundant for
+          # Legerix.loadNatives() itself (absolute-path load bypasses short-name
+          # resolution), but protects external consumers of tess4j directly.
+          ln -sf libleptonica.6.dylib out/libleptonica.dylib
+          ln -sf libtesseract.5.dylib out/libtesseract.dylib
+
       - name: Bundle transitive codec deps from homebrew
         run: |
           # Bundle the homebrew dylibs leptonica/tesseract linked against,
@@ -345,9 +370,13 @@ jobs:
           # Note: libz ships natively on macOS at /usr/lib/libz.dylib so no
           # bundling needed for it.
           BREW_PREFIX="$(brew --prefix)"
-          cp -L "$BREW_PREFIX"/lib/libjpeg.*.dylib       out/ 2>/dev/null || true
-          cp -L "$BREW_PREFIX"/lib/libpng16.*.dylib      out/ 2>/dev/null || true
-          cp -L "$BREW_PREFIX"/lib/libtiff.*.dylib       out/ 2>/dev/null || true
+          # RC5: fail hard if a critical codec is missing rather than shipping
+          # a jar that silently lacks it. libjpeg / libpng / libtiff are direct
+          # dependencies of libleptonica — a missing one produces UnsatisfiedLinkError
+          # on the first pixReadPng / pixReadJpeg call, hours after startup.
+          cp -L "$BREW_PREFIX"/lib/libjpeg.*.dylib       out/
+          cp -L "$BREW_PREFIX"/lib/libpng16.*.dylib      out/
+          cp -L "$BREW_PREFIX"/lib/libtiff.*.dylib       out/
           # Transitive deps via libtiff on homebrew (webp, zstd, lzma,
           # Lerc, jbig, deflate). brew installs these as separate formulae
           # under different names; copy what's present.
@@ -407,14 +436,43 @@ jobs:
           cp -L "$PREFIX/lib/libleptonica.6.dylib" out/
           cp -L "$PREFIX/lib/libtesseract.5.dylib" out/
 
+      - name: Rewrite install names + codesign (relocatable dylibs)
+        run: |
+          # From David Young's rapport Legerix#20 (RC2, RC3):
+          # - Fresh-built dylibs record LC_ID_DYLIB = $PREFIX/lib/... (the CI
+          #   runner path) and libtesseract's dependency on libleptonica points
+          #   at the same absolute prefix. Neither exists on a user's machine.
+          # - install_name_tool -id + -change makes both self-relative via
+          #   @loader_path so dyld resolves them from wherever Legerix extracts.
+          # - codesign is required on arm64 after install_name_tool touches the
+          #   Mach-O; without it dyld rejects the modified binary.
+          install_name_tool -id "@loader_path/libleptonica.6.dylib" out/libleptonica.6.dylib
+          install_name_tool -id "@loader_path/libtesseract.5.dylib" out/libtesseract.5.dylib
+          install_name_tool -change "$RUNNER_TEMP/legerix-prefix/lib/libleptonica.6.dylib" \
+                                    "@loader_path/libleptonica.6.dylib" \
+                                    out/libtesseract.5.dylib
+          codesign -f -s - out/libleptonica.6.dylib
+          codesign -f -s - out/libtesseract.5.dylib
+
+          # RC3: expose unversioned aliases so tess4j's Native.load("tesseract")
+          # matches without going through the Legerix loader. Redundant for
+          # Legerix.loadNatives() itself (absolute-path load bypasses short-name
+          # resolution), but protects external consumers of tess4j directly.
+          ln -sf libleptonica.6.dylib out/libleptonica.dylib
+          ln -sf libtesseract.5.dylib out/libtesseract.dylib
+
       - name: Bundle transitive codec deps from homebrew
         run: |
           # Same bundling as the x86_64 macOS job, but from the Apple
           # Silicon brew prefix. RPATH=@loader_path resolves at runtime.
           BREW_PREFIX="$(brew --prefix)"
-          cp -L "$BREW_PREFIX"/lib/libjpeg.*.dylib       out/ 2>/dev/null || true
-          cp -L "$BREW_PREFIX"/lib/libpng16.*.dylib      out/ 2>/dev/null || true
-          cp -L "$BREW_PREFIX"/lib/libtiff.*.dylib       out/ 2>/dev/null || true
+          # RC5: fail hard if a critical codec is missing rather than shipping
+          # a jar that silently lacks it. libjpeg / libpng / libtiff are direct
+          # dependencies of libleptonica — a missing one produces UnsatisfiedLinkError
+          # on the first pixReadPng / pixReadJpeg call, hours after startup.
+          cp -L "$BREW_PREFIX"/lib/libjpeg.*.dylib       out/
+          cp -L "$BREW_PREFIX"/lib/libpng16.*.dylib      out/
+          cp -L "$BREW_PREFIX"/lib/libtiff.*.dylib       out/
           # Transitive deps via libtiff on homebrew (webp, zstd, lzma,
           # Lerc, jbig, deflate). brew installs these as separate formulae
           # under different names; copy what's present.
