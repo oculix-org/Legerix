@@ -257,6 +257,23 @@ case "$(uname -s)" in
     *)
         cp -L "$FINAL_PREFIX/lib/libtesseract.so.5" "$REPO_ROOT/src/main/resources/$TIER/"
         cp -L "$FINAL_PREFIX/lib/libleptonica.so.6" "$REPO_ROOT/src/main/resources/$TIER/"
+
+        # See scripts/build-tesseract.sh for the full libtool $ORIGIN corruption
+        # story. David Young measured (Legerix#20) that the corrupted RUNPATH
+        # ("RIGIN" + FINAL_PREFIX absolute path) shipped in the 5.5.0-8 legacy
+        # tiers too — i.e. this local script has the same defect the CI has,
+        # not just build.yml. Post-fix with patchelf so a local build is as
+        # relocatable as a CI build.
+        if command -v patchelf >/dev/null 2>&1; then
+            patchelf --set-rpath '$ORIGIN' "$REPO_ROOT/src/main/resources/$TIER/libtesseract.so.5"
+            patchelf --set-rpath '$ORIGIN' "$REPO_ROOT/src/main/resources/$TIER/libleptonica.so.6"
+            echo "==> patchelf --set-rpath '\$ORIGIN' applied to both .so"
+        else
+            echo "WARNING: patchelf not installed. The produced .so still carry the CI"
+            echo "         build prefix in their RUNPATH and will fail to resolve"
+            echo "         libleptonica from the extraction directory at runtime."
+            echo "         Install with: sudo apt install patchelf"
+        fi
         ;;
 esac
 
