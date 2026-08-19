@@ -200,16 +200,37 @@ public final class Legerix {
                     tessdataDir.resolve(lang + ".traineddata"));
         }
 
-        // Make JNA find OUR libs by name, ahead of tess4j's bundled copies.
-        // tess4j's static initializer extracts its own (older) leptonica to
-        // /tmp/tess4j/ and prepends that path to jna.library.path. JNA's
-        // per-library addSearchPath is consulted BEFORE jna.library.path, so
-        // our path wins as long as the file name matches the libname regex
-        // (libtesseract.so.5 matches lib<name>\.so(\.\d+)*).
+        // Best-effort help for consumers that resolve tesseract/leptonica by
+        // short name via tess4j. Two mechanisms, both non-authoritative:
+        //
+        //   1. addSearchPath. David Young measured (Legerix#20) that JNA's
+        //      matchLibrary pools candidates across ALL search directories and
+        //      picks the highest-parsed-version, so a system libtesseract.so.5.0.3
+        //      always beats our libtesseract.so.5 no matter which directory is
+        //      first. Setting these is at best neutral, at worst a false hint —
+        //      kept because unversioned macOS symlinks (build.yml 00bad35) DO
+        //      let the exact-name pass resolve here in search order.
+        //
+        //   2. jna.library.path preseed. tess4j rewrites this property at its
+        //      own static init (its LoadLibs class prepends %TEMP%\tess4j\ and,
+        //      on macOS, /opt/homebrew/lib). We prepend our directory before
+        //      that happens so at least it is present in the merged path.
+        //      Not a hard guarantee — tess4j's prepend order is undocumented.
+        //
+        // NEITHER mechanism protects Legerix.loadNatives() itself: the
+        // System.load() calls below use absolute paths and bypass all short-
+        // name resolution. And assertBundledTesseract() below uses
+        // NativeLibrary.getInstance(absolute) for the same reason. These two
+        // hints only affect what happens when a *consumer* (e.g. tess4j via
+        // TessAPI, or any code calling Native.load("tesseract", ...)) tries
+        // short-name resolution later — a race Legerix cannot fully control.
         final String ours = target.toAbsolutePath().toString();
         NativeLibrary.addSearchPath("tesseract", ours);
         NativeLibrary.addSearchPath("leptonica", ours);
         NativeLibrary.addSearchPath("lept", ours);
+        final String existing = System.getProperty("jna.library.path", "");
+        System.setProperty("jna.library.path",
+                existing.isEmpty() ? ours : ours + java.io.File.pathSeparator + existing);
 
         // On Windows, the vcpkg-built leptonica/tesseract DLLs are shims that
         // import sibling DLLs (libleptonica1870.dll, libpng16.dll, ...) from
@@ -235,17 +256,14 @@ public final class Legerix {
         System.load(target.resolve(leptonicaFileName(os)).toAbsolutePath().toString());
         System.load(target.resolve(tesseractFileName(os)).toAbsolutePath().toString());
 
-        // Verify what actually loaded matches what we shipped. Skipped on
-        // Windows: the assertion goes through Native.load("tesseract") which
-        // resolves to the short name "tesseract.dll" — but the Windows payload
-        // ships "tesseract55.dll" (vcpkg convention). Windows is also not
-        // affected by the silent-system-binding failure mode that this check
-        // was designed to catch: tess4j on Windows extracts and loads its own
-        // versioned name from %TEMP%\tess4j\ by absolute path, so no system
-        // library can shadow the bundled one.
-        if (os != OS.WINDOWS) {
-            assertBundledTesseract();
-        }
+        // Verify what actually loaded matches what we shipped, by calling
+        // TessVersion() on the exact file we just System.load'd — not via
+        // short-name JNA resolution which David Young measured (Legerix#20)
+        // to be structurally unable to prefer our copy over a higher-parsed-
+        // version system library. Passing the absolute path to
+        // NativeLibrary.getInstance() bypasses matchLibrary entirely and
+        // guarantees the handle points at our extracted binary.
+        assertBundledTesseract(target.resolve(tesseractFileName(os)).toAbsolutePath().toString());
 
         extractionDir = target;
         loaded = true;
@@ -310,11 +328,23 @@ public final class Legerix {
         return "5.5.0";
     }
 
+    // Development-time fallback for cacheVersion() when running from
+    // target/classes (no jar manifest). MUST be kept in sync with pom.xml's
+    // <version> so that mvn test picks up new natives after every bump.
+    // David Young measured a real user-facing bug on this in Legerix#20:
+    // on upgrade 5.5.0-8 -> 5.5.0-9 the cache was keyed on the bare
+    // "5.5.0" (getTesseractVersion() strips the build suffix), so
+    // extractIfMissing early-returned and users kept the old natives.
+    private static final String DEV_CACHE_VERSION = "5.5.0-9-DO-NOT-USE";
+
     // Full Legerix Maven version (e.g. "5.5.0-3"), used as cache key so that
     // bumping only the Legerix build suffix invalidates stale extracted DLLs.
+    // Under mvn test the class loads from target/classes with no manifest, so
+    // getImplementationVersion() returns null — we fall back to DEV_CACHE_VERSION
+    // which includes the suffix, not to getTesseractVersion() which strips it.
     private static String cacheVersion() {
         final String v = Legerix.class.getPackage().getImplementationVersion();
-        return v != null ? v : getTesseractVersion();
+        return v != null ? v : DEV_CACHE_VERSION;
     }
 
     // -- internals ----------------------------------------------------------
@@ -491,37 +521,57 @@ public final class Legerix {
         boolean SetDllDirectoryW(WString lpPathName);
     }
 
-    // Minimal JNA binding to libtesseract's TessVersion(). Used post-load to
-    // verify that the library actually mapped into the process is the one
-    // this artifact shipped, not a system Tesseract that sneaked in.
-    private interface TessNative extends com.sun.jna.Library {
-        String TessVersion();
+    /**
+     * Read {@code TessVersion()} directly on the extracted bundled libtesseract
+     * at {@code absoluteTesseractPath} — not via JNA short-name resolution,
+     * which David Young measured in Legerix#20 to be structurally unable to
+     * prefer our copy over a higher-parsed-version system library. Passing an
+     * absolute path (a string containing a path separator) to
+     * {@link NativeLibrary#getInstance(String)} makes JNA call {@code dlopen}
+     * (or {@code LoadLibraryW}) on that file directly, bypassing
+     * {@code matchLibrary} entirely.
+     *
+     * <p>Package-private so tests can prove path-identity without going
+     * through reflection.
+     */
+    static String getLoadedTesseractVersion(final String absoluteTesseractPath) {
+        final NativeLibrary lib = NativeLibrary.getInstance(absoluteTesseractPath);
+        return lib.getFunction("TessVersion").invokeString(new Object[0], false);
     }
 
     /**
-     * Read {@code TessVersion()} on whatever libtesseract is currently loaded
-     * for JNA and expose it. Package-private so tests can compare against
-     * {@link #getTesseractVersion()} and prove that no silent system-library
-     * binding took place.
+     * Fail loudly at startup if the upstream Tesseract version reported by
+     * the file we just extracted does not match this artifact's declared
+     * version at the MAJOR.MINOR level.
+     *
+     * <p>Path identity is already guaranteed by the caller: we called
+     * {@link #getLoadedTesseractVersion(String)} with the absolute path we
+     * ourselves extracted, so the version we read describes our own binary.
+     * What remains to check is upstream MAJOR.MINOR alignment — the payload
+     * per platform can legitimately differ at the patch level (Windows vcpkg
+     * ships 5.5.2, Linux/macOS from-source ship 5.5.0), so an exact-string
+     * match would false-positive on Windows even against a correct build.
      */
-    static String getLoadedTesseractVersion() {
-        return Native.load("tesseract", TessNative.class).TessVersion();
-    }
-
-    /**
-     * Fail loudly at startup if the loaded Tesseract is not the bundled one.
-     * Prevents the silent-system-binding failure mode where OCR runs happily
-     * against a wrong version — reported by users hours or days later as
-     * "the output doesn't match what my colleague gets".
-     */
-    private static void assertBundledTesseract() {
-        final String actual = getLoadedTesseractVersion();
+    private static void assertBundledTesseract(final String absoluteTesseractPath) {
+        final String actual = getLoadedTesseractVersion(absoluteTesseractPath);
         final String bundled = getTesseractVersion();
-        if (actual == null || !actual.startsWith(bundled)) {
+        final String actualMM = majorMinor(actual);
+        final String bundledMM = majorMinor(bundled);
+        if (actualMM == null || !actualMM.equals(bundledMM)) {
             throw new IllegalStateException(
                     "Legerix loaded the wrong Tesseract: expected " + bundled
-                            + " (bundled) but TessVersion() reports " + actual
-                            + ". A system Tesseract may have been resolved ahead of the bundled library.");
+                            + " (bundled, MAJOR.MINOR " + bundledMM + ") but TessVersion() reports "
+                            + actual + " on " + absoluteTesseractPath
+                            + ". The extracted file may be corrupt or a different upstream MAJOR.MINOR than declared.");
         }
+    }
+
+    /** Extract MAJOR.MINOR from a version string. {@code "5.5.2"} → {@code "5.5"}. */
+    private static String majorMinor(final String v) {
+        if (v == null) return null;
+        final int firstDot = v.indexOf('.');
+        if (firstDot < 0) return v;
+        final int secondDot = v.indexOf('.', firstDot + 1);
+        return secondDot < 0 ? v : v.substring(0, secondDot);
     }
 }

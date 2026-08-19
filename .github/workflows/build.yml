@@ -355,9 +355,13 @@ jobs:
           codesign -f -s - out/libtesseract.5.dylib
 
           # RC3: expose unversioned aliases so tess4j's Native.load("tesseract")
-          # matches without going through the Legerix loader. Redundant for
-          # Legerix.loadNatives() itself (absolute-path load bypasses short-name
-          # resolution), but protects external consumers of tess4j directly.
+          # matches without going through the Legerix loader.
+          # DO NOT REMOVE — David Young identified in Legerix#20 that these
+          # aliases are load-bearing for assertBundledTesseract() on macOS
+          # (the payload ships libtesseract.5.dylib but JNA short-name lookup
+          # asks for libtesseract.dylib, which the version-before-extension
+          # convention prevents from ever matching without an unversioned
+          # alias). They also protect external consumers of tess4j directly.
           ln -sf libleptonica.6.dylib out/libleptonica.dylib
           ln -sf libtesseract.5.dylib out/libtesseract.dylib
 
@@ -455,9 +459,13 @@ jobs:
           codesign -f -s - out/libtesseract.5.dylib
 
           # RC3: expose unversioned aliases so tess4j's Native.load("tesseract")
-          # matches without going through the Legerix loader. Redundant for
-          # Legerix.loadNatives() itself (absolute-path load bypasses short-name
-          # resolution), but protects external consumers of tess4j directly.
+          # matches without going through the Legerix loader.
+          # DO NOT REMOVE — David Young identified in Legerix#20 that these
+          # aliases are load-bearing for assertBundledTesseract() on macOS
+          # (the payload ships libtesseract.5.dylib but JNA short-name lookup
+          # asks for libtesseract.dylib, which the version-before-extension
+          # convention prevents from ever matching without an unversioned
+          # alias). They also protect external consumers of tess4j directly.
           ln -sf libleptonica.6.dylib out/libleptonica.dylib
           ln -sf libtesseract.5.dylib out/libtesseract.dylib
 
@@ -751,8 +759,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="v${{ steps.version.outputs.VERSION }}"
+          # Mark as pre-release for anything that is clearly a test build.
+          # Keeps "Latest release" pointing at the last real stable tag on the
+          # public releases page, even if a workflow_dispatch from a fix/**
+          # branch produces something like v5.5.0-9-DO-NOT-USE first.
+          PRERELEASE_FLAG=""
+          case "$TAG" in
+              *DO-NOT-USE*|*-rc[0-9]*|*-beta*|*-alpha*|*-SNAPSHOT*)
+                  PRERELEASE_FLAG="--prerelease"
+                  ;;
+          esac
           if ! gh release view "$TAG" > /dev/null 2>&1; then
-            gh release create "$TAG" \
+            gh release create "$TAG" $PRERELEASE_FLAG \
               --title "Legerix ${{ steps.version.outputs.VERSION }}" \
               --notes "Tesseract + Leptonica natives bundled for Linux (x86_64 + aarch64, modern + legacy glibc 2.28), macOS (x86_64 + aarch64) and Windows (x86_64)."
           fi
