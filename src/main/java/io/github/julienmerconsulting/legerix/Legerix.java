@@ -1,9 +1,13 @@
 package io.github.julienmerconsulting.legerix;
 
+import com.sun.jna.Library;
 import com.sun.jna.Native;
 import com.sun.jna.NativeLibrary;
 import com.sun.jna.WString;
 import com.sun.jna.win32.StdCallLibrary;
+
+import java.util.HashMap;
+import java.util.Map;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -253,8 +257,8 @@ public final class Legerix {
         // dynamic linker walks tesseract's dependencies (which sidesteps
         // any RUNPATH corruption that libtool may have produced at build
         // time and any LC_ID_DYLIB pointing at the CI runner on macOS).
-        System.load(target.resolve(leptonicaFileName(os)).toAbsolutePath().toString());
-        System.load(target.resolve(tesseractFileName(os)).toAbsolutePath().toString());
+        loadBundledLib(target.resolve(leptonicaFileName(os)).toAbsolutePath().toString(), os);
+        loadBundledLib(target.resolve(tesseractFileName(os)).toAbsolutePath().toString(), os);
 
         // Verify what actually loaded matches what we shipped, by calling
         // TessVersion() on the exact file we just System.load'd — not via
@@ -510,6 +514,41 @@ public final class Legerix {
                 if (tail.isEmpty() || tail.contains("/")) continue;
                 extractIfMissing(name, target.resolve(tail));
             }
+        }
+    }
+
+    // dlopen(3) flags used to force RTLD_GLOBAL on Linux — see loadBundledLib.
+    private static final int RTLD_LAZY_LINUX   = 0x1;
+    private static final int RTLD_GLOBAL_LINUX = 0x100;
+
+    /**
+     * Load a bundled native library by absolute path. On Linux, force RTLD_GLOBAL
+     * via JNA so our symbols satisfy the DT_NEEDED of libraries the OS loads
+     * later (typically the system libtesseract that tess4j resolves via
+     * short-name lookup). Without RTLD_GLOBAL, System.load() defaults to
+     * RTLD_LOCAL on Linux → our libleptonica is invisible → the dynamic linker
+     * loads a SECOND libleptonica to satisfy the system libtesseract's NEEDED →
+     * two Leptonicas coexist with incompatible Pix struct layouts → SIGSEGV in
+     * pixDestroy when a Pix crosses between the two (measured on Ubuntu 24.04
+     * apt tesseract-ocr, hs_err_pid libleptonica.so.6+0x152f9a pixDestroy+0x1a,
+     * verify-natives-matrix CI run 32595060133 — the "symbol-interposition
+     * hazard" David Young flagged in Legerix#20).
+     *
+     * On macOS: install_name_tool + unversioned symlinks (build.yml commit
+     * 00bad35) already handle the interposition path; keep the plain
+     * System.load which uses dyld's flat namespace semantics.
+     *
+     * On Windows: tess4j's LoadLibs extracts DLLs into %TEMP%\tess4j\ and
+     * binds by absolute path; no short-name resolution → no interposition
+     * risk. Keep System.load.
+     */
+    private static void loadBundledLib(final String absolutePath, final OS os) {
+        if (os == OS.LINUX) {
+            final Map<String, Object> opts = new HashMap<>();
+            opts.put(Library.OPTION_OPEN_FLAGS, RTLD_LAZY_LINUX | RTLD_GLOBAL_LINUX);
+            NativeLibrary.getInstance(absolutePath, opts);
+        } else {
+            System.load(absolutePath);
         }
     }
 
