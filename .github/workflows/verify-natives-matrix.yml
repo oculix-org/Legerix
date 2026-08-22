@@ -1,0 +1,140 @@
+name: Verify natives cross-platform matrix (#20 RC6)
+
+# Répond à la Q5 (RC6) de David Young dans le retest report de Legerix#20 :
+# "the matrix is the whole point: runners with and without a system Tesseract.
+# Per the prediction above, a CI-only check without one will pass while users fail."
+#
+# 5 combos matrix (OS × system-Tesseract), chacun stage les natives de la
+# pre-release v5.5.0-9-DO-NOT-USE et run LegerixSmokeTest — incluant
+# loadedTesseractIsBundledNotSystem qui valide l'assertion path-identity
+# du fix (Legerix.java:517 sur cette branche).
+
+on:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            resource_dir: linux-x86-64
+            system_tesseract: false
+            label: "Linux — no system tesseract"
+          - os: ubuntu-24.04
+            resource_dir: linux-x86-64
+            system_tesseract: true
+            label: "Linux — with apt tesseract"
+          - os: macos-14
+            resource_dir: darwin-aarch64
+            system_tesseract: false
+            label: "macOS aarch64 — no system tesseract"
+          - os: macos-14
+            resource_dir: darwin-aarch64
+            system_tesseract: true
+            label: "macOS aarch64 — with brew tesseract"
+          - os: windows-latest
+            resource_dir: win32-x86-64
+            system_tesseract: false
+            label: "Windows — no system tesseract"
+
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.label }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      # ── Stage natives from pre-release ─────────────────────────────
+      - name: Stage Linux natives from release
+        if: matrix.resource_dir == 'linux-x86-64'
+        shell: bash
+        run: |
+          mkdir -p src/main/resources/linux-x86-64
+          cd src/main/resources/linux-x86-64
+          curl -sSL -o libtesseract.so.5 \
+            https://github.com/oculix-org/Legerix/releases/download/v5.5.0-9-DO-NOT-USE/libtesseract.so.5-linux-x86-64
+          curl -sSL -o libleptonica.so.6 \
+            https://github.com/oculix-org/Legerix/releases/download/v5.5.0-9-DO-NOT-USE/libleptonica.so.6-linux-x86-64
+          ls -la
+
+      - name: Stage macOS aarch64 natives from release
+        if: matrix.resource_dir == 'darwin-aarch64'
+        shell: bash
+        run: |
+          mkdir -p src/main/resources/darwin-aarch64
+          cd src/main/resources/darwin-aarch64
+          curl -sSL -o libtesseract.5.dylib \
+            https://github.com/oculix-org/Legerix/releases/download/v5.5.0-9-DO-NOT-USE/libtesseract.5-darwin-aarch64.dylib
+          curl -sSL -o libleptonica.6.dylib \
+            https://github.com/oculix-org/Legerix/releases/download/v5.5.0-9-DO-NOT-USE/libleptonica.6-darwin-aarch64.dylib
+          # Unversioned symlinks (load-bearing per commit 00bad35)
+          ln -sf libtesseract.5.dylib libtesseract.dylib
+          ln -sf libleptonica.6.dylib libleptonica.dylib
+          ls -la
+
+      - name: Stage Windows natives from release
+        if: matrix.resource_dir == 'win32-x86-64'
+        shell: bash
+        run: |
+          mkdir -p src/main/resources/win32-x86-64
+          curl -sSL -o legerix-win-x86-64.zip \
+            https://github.com/oculix-org/Legerix/releases/download/v5.5.0-9-DO-NOT-USE/legerix-win-x86-64.zip
+          unzip -o legerix-win-x86-64.zip -d src/main/resources/win32-x86-64/
+          ls -la src/main/resources/win32-x86-64/
+
+      # ── Fetch traineddata ──────────────────────────────────────────
+      - name: Fetch traineddata (5 bundled languages)
+        shell: bash
+        run: bash ./scripts/fetch-traineddata.sh src/main/resources/tessdata
+
+      # ── Install system Tesseract (conditionnel matrix) ─────────────
+      - name: Install system Tesseract (Ubuntu — apt)
+        if: matrix.os == 'ubuntu-24.04' && matrix.system_tesseract
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -q -y tesseract-ocr
+
+      - name: Install system Tesseract (macOS — brew)
+        if: startsWith(matrix.os, 'macos') && matrix.system_tesseract
+        run: brew install tesseract
+
+      # ── Diagnostic : quelle version tesseract présente ─────────────
+      - name: Show system Tesseract state
+        shell: bash
+        run: |
+          echo "Matrix combo: os=${{ matrix.os }} system_tesseract=${{ matrix.system_tesseract }}"
+          if command -v tesseract &> /dev/null; then
+            echo "System tesseract found:"
+            tesseract --version 2>&1 | head -3
+            case "${{ matrix.os }}" in
+              ubuntu*)
+                echo "System libtesseract paths:"
+                ls -la /usr/lib/x86_64-linux-gnu/libtesseract* 2>/dev/null || echo "no libtesseract in /usr/lib"
+                ;;
+              macos*)
+                echo "System libtesseract paths:"
+                ls -la /opt/homebrew/lib/libtesseract* 2>/dev/null || echo "no libtesseract in /opt/homebrew/lib"
+                ls -la /usr/local/lib/libtesseract* 2>/dev/null || true
+                ;;
+            esac
+          else
+            echo "no system tesseract (clean environment)"
+          fi
+
+      # ── Run les tests Legerix ──────────────────────────────────────
+      - name: Run LegerixSmokeTest
+        run: mvn -B test
+
+      # ── Upload logs si échec pour diagnostic ────────────────────────
+      - name: Upload surefire reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-${{ matrix.os }}-${{ matrix.system_tesseract }}
+          path: target/surefire-reports/
