@@ -250,48 +250,6 @@ public final class Legerix {
             }
         }
 
-        // On Linux, if a system libleptonica.so.5 (SONAME of Leptonica ~1.82,
-        // shipped by apt tesseract-ocr / yum tesseract / zypper tesseract-ocr)
-        // is present WITHOUT a matching libleptonica.so.6, the dynamic linker
-        // will load a SECOND libleptonica the moment tess4j resolves the
-        // system libtesseract by short-name. Two Leptonicas with incompatible
-        // Pix struct layouts coexisting → SIGSEGV in pixDestroy on the first
-        // cross-boundary destroy (Legerix#20, measured on Ubuntu 24.04 + apt
-        // tesseract-ocr, CI run 32598299500, hs_err pixDestroy+0x1a).
-        //
-        // Neither RTLD_GLOBAL (we already set it below) nor an unversioned
-        // symlink can fix this in Java land — the loader resolves NEEDED by
-        // DT_SONAME match, and our bundled lib has SONAME libleptonica.so.6.
-        // The proper fix would be `patchelf --set-soname libleptonica.so.5`
-        // at build time, but that carries ABI risk (1.87 vs 1.82) and needs
-        // to be tested off the critical path first.
-        //
-        // Fail loud with an actionable message rather than let the JVM crash
-        // silently at first OCR call. The user sees the exact library that
-        // triggers the conflict and can either uninstall it, unset it from
-        // the loader search paths, or ship a container without it.
-        if (os == OS.LINUX) {
-            final Path conflicting = findConflictingLinuxLeptonica();
-            if (conflicting != null) {
-                throw new IllegalStateException(
-                        "Legerix cannot coexist with the system Leptonica on Linux.\n" +
-                        "  Conflicting library: " + conflicting + "\n" +
-                        "  Bundled library:    " + target.resolve(leptonicaFileName(os)).toAbsolutePath() + "\n\n" +
-                        "The system library has SONAME libleptonica.so.5 (Leptonica ~1.82, shipped\n" +
-                        "by apt tesseract-ocr / equivalent). Legerix bundles libleptonica.so.6\n" +
-                        "(Leptonica 1.87). The dynamic linker matches DT_NEEDED by exact SONAME,\n" +
-                        "so both libraries would be loaded simultaneously with incompatible Pix\n" +
-                        "struct layouts, causing SIGSEGV in pixDestroy on the first cross-boundary\n" +
-                        "destroy (tracked at https://github.com/oculix-org/Legerix/issues/20).\n\n" +
-                        "Workaround — uninstall the conflicting system Leptonica:\n" +
-                        "  Debian/Ubuntu: sudo apt remove tesseract-ocr libtesseract-dev libleptonica-dev\n" +
-                        "  RHEL/CentOS:   sudo yum remove tesseract leptonica\n" +
-                        "  openSUSE:      sudo zypper remove tesseract-ocr libleptonica5\n\n" +
-                        "Or run Legerix in a container / clean environment without the system package."
-                );
-            }
-        }
-
         // Load OUR bundled files by absolute path, in dependency order.
         // Absolute path bypasses short-name resolution entirely — no system
         // library can shadow ours. Order matters: leptonica first, so that
@@ -562,48 +520,6 @@ public final class Legerix {
     // dlopen(3) flags used to force RTLD_GLOBAL on Linux — see loadBundledLib.
     private static final int RTLD_LAZY_LINUX   = 0x1;
     private static final int RTLD_GLOBAL_LINUX = 0x100;
-
-    /**
-     * Detect a system Leptonica whose SONAME (libleptonica.so.5 / liblept.so.5)
-     * would conflict with our bundled libleptonica.so.6 on Linux. Returns null
-     * if the system either has no Leptonica or has a compatible .so.6 alongside
-     * (the .so.6 case is safe — our bundled satisfies the NEEDED).
-     */
-    private static Path findConflictingLinuxLeptonica() {
-        final String[] libDirs = {
-                "/usr/lib/x86_64-linux-gnu",
-                "/usr/lib/aarch64-linux-gnu",
-                "/usr/lib64",
-                "/usr/lib",
-                "/usr/local/lib",
-        };
-        for (final String dir : libDirs) {
-            final Path so6 = Paths.get(dir, "libleptonica.so.6");
-            if (Files.exists(so6)) {
-                // System has a compatible .so.6 — no conflict.
-                return null;
-            }
-        }
-        for (final String dir : libDirs) {
-            for (final String name : new String[]{"libleptonica.so.5", "liblept.so.5"}) {
-                final Path candidate = Paths.get(dir, name);
-                if (Files.exists(candidate)) {
-                    return candidate;
-                }
-                // Also match versioned suffixes like liblept.so.5.0.4
-                try (java.util.stream.Stream<Path> stream = Files.list(Paths.get(dir))) {
-                    Path match = stream
-                            .filter(p -> p.getFileName().toString().startsWith(name + "."))
-                            .findFirst()
-                            .orElse(null);
-                    if (match != null) return match;
-                } catch (IOException ignored) {
-                    // dir doesn't exist or unreadable — skip
-                }
-            }
-        }
-        return null;
-    }
 
     /**
      * Load a bundled native library by absolute path. On Linux, force RTLD_GLOBAL
