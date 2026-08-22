@@ -667,12 +667,28 @@ jobs:
                   echo "  STD     $LIB"
                   continue
                 fi
-                # Check if present in same tier
+                # Check if present in same tier — first by filename, then by
+                # DT_SONAME (a bundled lib may satisfy the NEEDED via its
+                # SONAME field even if the filename on disk differs, e.g.
+                # libleptonica.so.6 patched to SONAME=libleptonica.so.5 to
+                # satisfy the NEEDED of any system libtesseract, Legerix#20).
                 if [ -f "$TIER_DIR/$LIB" ]; then
                   echo "  BUNDLED $LIB"
                 else
-                  echo "  MISSING $LIB (not standard and not bundled)"
-                  OVERALL_OK=false
+                  SONAME_MATCH=""
+                  for OTHER in "$TIER_DIR"/*.so*; do
+                    OTHER_SONAME=$(readelf -d "$OTHER" 2>/dev/null | grep -w SONAME | grep -oE '\[[^]]+\]' | tr -d '[]')
+                    if [ "$OTHER_SONAME" = "$LIB" ]; then
+                      SONAME_MATCH="$(basename $OTHER)"
+                      break
+                    fi
+                  done
+                  if [ -n "$SONAME_MATCH" ]; then
+                    echo "  BUNDLED $LIB (via SONAME of $SONAME_MATCH)"
+                  else
+                    echo "  MISSING $LIB (not standard and not bundled)"
+                    OVERALL_OK=false
+                  fi
                 fi
               done
             done
