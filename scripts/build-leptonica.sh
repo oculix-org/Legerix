@@ -67,20 +67,20 @@ if [ "$(uname -s)" != "Darwin" ] && command -v patchelf >/dev/null 2>&1; then
             patchelf --set-rpath '$ORIGIN' "$so"
             echo "==> patchelf --set-rpath '\$ORIGIN' $so"
 
-            # Force DT_SONAME to libleptonica.so.5 so our lib satisfies the
+            # Force DT_SONAME to liblept.so.5 so our lib satisfies the
             # NEEDED of ANY system libtesseract that Ubuntu apt / RHEL yum
             # / openSUSE zypper ships (they all link against Leptonica ~1.82
-            # whose SONAME is libleptonica.so.5). Without this, our bundled
+            # whose SONAME is liblept.so.5). Without this, our bundled
             # Leptonica has SONAME libleptonica.so.6 and cannot satisfy the
-            # NEEDED libleptonica.so.5 — the dynamic linker falls back to
+            # NEEDED liblept.so.5 — the dynamic linker falls back to
             # /usr/lib/.../liblept.so.5.0.4, loading a SECOND Leptonica with
             # incompatible Pix struct layouts → SIGSEGV in pixDestroy the
             # moment a Pix crosses between the two (Legerix#20 CI matrix
             # run 32598299500). ABI note: Leptonica 1.82 → 1.87 kept the
             # Pix struct layout stable (see CHANGES.md), so it is safe to
             # claim SONAME .so.5 for the exposed core surface.
-            patchelf --set-soname libleptonica.so.5 "$so"
-            echo "==> patchelf --set-soname libleptonica.so.5 $so"
+            patchelf --set-soname liblept.so.5 "$so"
+            echo "==> patchelf --set-soname liblept.so.5 $so"
         fi
     done
 fi

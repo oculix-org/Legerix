@@ -67,13 +67,13 @@ if [ "$(uname -s)" != "Darwin" ] && command -v patchelf >/dev/null 2>&1; then
             echo "==> patchelf --set-rpath '\$ORIGIN' $so"
 
             # Rewrite our libtesseract's NEEDED entry from libleptonica.so.6
-            # to libleptonica.so.5 to match the SONAME we now force on the
+            # to liblept.so.5 to match the SONAME we now force on the
             # bundled Leptonica (see build-leptonica.sh — patchelf --set-soname
-            # libleptonica.so.5). Both sides of the pair must speak the same
+            # liblept.so.5). Both sides of the pair must speak the same
             # SONAME or the dynamic linker won't consider our lib when
             # resolving our tesseract's NEEDED.
-            patchelf --replace-needed libleptonica.so.6 libleptonica.so.5 "$so"
-            echo "==> patchelf --replace-needed libleptonica.so.6 libleptonica.so.5 $so"
+            patchelf --replace-needed libleptonica.so.6 liblept.so.5 "$so"
+            echo "==> patchelf --replace-needed libleptonica.so.6 liblept.so.5 $so"
         fi
     done
 fi
