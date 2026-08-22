@@ -11,6 +11,12 @@ name: Verify natives cross-platform matrix (#20 RC6)
 
 on:
   workflow_dispatch:
+  # GitHub ne connaît un workflow via workflow_dispatch que s'il est sur la
+  # branche default. En attendant le merge sur master, on ajoute un trigger
+  # push sur cette branche pour permettre l'auto-run au prochain commit.
+  push:
+    branches:
+      - fix/20-runpath-and-verify
 
 jobs:
   verify:
