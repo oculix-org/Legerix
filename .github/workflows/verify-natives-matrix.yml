@@ -138,9 +138,15 @@ jobs:
         run: mvn -B test
 
       # ── Upload logs si échec pour diagnostic ────────────────────────
+      # hs_err_pid*.log : la JVM l'écrit à la racine du projet (cwd du fork
+      # surefire), pas dans surefire-reports — sans lui on n'a que le
+      # dumpstream tronqué, sans la section "Dynamic libraries" qui liste
+      # les .so réellement mappés au moment du SIGSEGV.
       - name: Upload surefire reports on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: surefire-${{ matrix.os }}-${{ matrix.system_tesseract }}
-          path: target/surefire-reports/
+          path: |
+            target/surefire-reports/
+            hs_err_pid*.log
