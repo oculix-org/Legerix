@@ -1,0 +1,68 @@
+name: Octachorix theorem (#20) — Linux modern + legacy
+
+# Joue ScribeSystemInterferenceTest d'Octachorix sur les deux tiers Linux,
+# avec un tesseract apt installé : la lib chargée doit être la nôtre (5.5.0),
+# pas celle du système. Même staging que verify-natives-matrix.yml.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - fix/20-runpath-and-verify
+
+jobs:
+  theorem:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - tier: linux-x86-64
+            os: ubuntu-24.04
+          - tier: linux-x86-64-legacy
+            os: ubuntu-22.04
+
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.tier }} + apt tesseract
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: oculix-org/Octachorix
+          path: octachorix
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Stage natives (${{ matrix.tier }}) from v5.5.0-9-DO-NOT-USE
+        run: |
+          mkdir -p natives
+          curl -sSL -o natives/libtesseract.so.5 https://github.com/oculix-org/Legerix/releases/download/v5.5.0-9-DO-NOT-USE/libtesseract.so.5-${{ matrix.tier }}
+          curl -sSL -o natives/libleptonica.so.6 https://github.com/oculix-org/Legerix/releases/download/v5.5.0-9-DO-NOT-USE/libleptonica.so.6-${{ matrix.tier }}
+          bash ./scripts/fetch-traineddata.sh tessdata
+
+      - name: Install system Tesseract (apt)
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -q -y tesseract-ocr
+          tesseract --version 2>&1 | head -1
+
+      - name: mvn test
+        working-directory: octachorix
+        run: >
+          mvn -B test
+          -DargLine="-Doctachorix.test.libs.tesseract=${{ github.workspace }}/natives/libtesseract.so.5
+          -Doctachorix.test.libs.leptonica=${{ github.workspace }}/natives/libleptonica.so.6
+          -Doctachorix.test.libs.tessdata=${{ github.workspace }}/tessdata
+          -Doctachorix.test.expectedVersion=5.5.0"
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: surefire-${{ matrix.tier }}
+          path: |
+            octachorix/target/surefire-reports/
+            octachorix/hs_err_pid*.log
