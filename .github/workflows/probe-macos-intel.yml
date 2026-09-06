@@ -1,0 +1,124 @@
+name: Probe — macOS Intel build (hand-run, ships nothing)
+
+# The build_macos_x64 job of build.yml, copied verbatim, with one change:
+# runs-on macos-15-intel instead of macos-latest. build.yml's comment
+# ("Verified Intel-compatible by upstream Apertix") dates from when
+# macos-latest still meant macos-12 (Intel); since macos-14 became latest
+# the job has been compiling arm64 while believing it builds Intel — the
+# darwin tier of 5.5.0-8 carries arm64 dylibs (Mach-O cputype 0x0100000C).
+#
+# This workflow builds ONLY the Intel tier, uploads it as a run artifact,
+# prints the architecture of every dylib in the log, and touches no release.
+# Run it by hand, read the log, download the artifact. If it is green and
+# x86_64, the fix for build.yml is the single runs-on line.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe_macos_x64:
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: 17
+          distribution: temurin
+
+      - name: Runner architecture (sanity)
+        run: |
+          uname -m
+          sysctl -n machdep.cpu.brand_string
+
+      - name: Get Version Info
+        run: |
+          echo "TESSERACT_VERSION=$(mvn build-helper:parse-version org.apache.maven.plugins:maven-help-plugin:3.2.0:evaluate -Dexpression=tesseract.version.long -q -DforceStdout)" >> $GITHUB_ENV
+          echo "LEPTONICA_VERSION=$(mvn build-helper:parse-version org.apache.maven.plugins:maven-help-plugin:3.2.0:evaluate -Dexpression=leptonica.version -q -DforceStdout)" >> $GITHUB_ENV
+
+      - name: Install build dependencies
+        run: |
+          # webp/xz/zstd/jbigkit/lerc/libdeflate are pulled in by libtiff at
+          # runtime — install them explicitly so they exist in $(brew --prefix)/lib
+          # when we bundle them after the build.
+          # Note: lerc is NOT in homebrew, so libtiff on macOS is compiled
+          # without LERC support and never references libLerc as NEEDED.
+          brew install autoconf automake libtool pkg-config \
+                       libpng jpeg libtiff \
+                       webp xz zstd jbigkit libdeflate
+
+      - name: Build leptonica + tesseract
+        run: |
+          PREFIX="$RUNNER_TEMP/legerix-prefix"
+          mkdir -p "$PREFIX"
+          ./scripts/build-leptonica.sh "$LEPTONICA_VERSION" "$PREFIX"
+          ./scripts/build-tesseract.sh "$TESSERACT_VERSION" "$PREFIX"
+          mkdir -p out
+          cp -L "$PREFIX/lib/libleptonica.6.dylib" out/
+          cp -L "$PREFIX/lib/libtesseract.5.dylib" out/
+
+      - name: Rewrite install names + codesign (relocatable dylibs)
+        run: |
+          # From David Young's rapport Legerix#20 (RC2, RC3):
+          # - Fresh-built dylibs record LC_ID_DYLIB = $PREFIX/lib/... (the CI
+          #   runner path) and libtesseract's dependency on libleptonica points
+          #   at the same absolute prefix. Neither exists on a user's machine.
+          # - install_name_tool -id + -change makes both self-relative via
+          #   @loader_path so dyld resolves them from wherever Legerix extracts.
+          # - codesign is required on arm64 after install_name_tool touches the
+          #   Mach-O; without it dyld rejects the modified binary.
+          install_name_tool -id "@loader_path/libleptonica.6.dylib" out/libleptonica.6.dylib
+          install_name_tool -id "@loader_path/libtesseract.5.dylib" out/libtesseract.5.dylib
+          install_name_tool -change "$RUNNER_TEMP/legerix-prefix/lib/libleptonica.6.dylib" \
+                                    "@loader_path/libleptonica.6.dylib" \
+                                    out/libtesseract.5.dylib
+          codesign -f -s - out/libleptonica.6.dylib
+          codesign -f -s - out/libtesseract.5.dylib
+
+          # RC3: expose unversioned aliases so tess4j's Native.load("tesseract")
+          # matches without going through the Legerix loader.
+          ln -sf libleptonica.6.dylib out/libleptonica.dylib
+          ln -sf libtesseract.5.dylib out/libtesseract.dylib
+
+      - name: Bundle transitive codec deps from homebrew
+        run: |
+          # Bundle the homebrew dylibs leptonica/tesseract linked against,
+          # so users without those brew formulae installed can still load
+          # Legerix. RPATH=@loader_path set at build time resolves these
+          # at runtime from the same directory as libtesseract.
+          # Note: libz ships natively on macOS at /usr/lib/libz.dylib so no
+          # bundling needed for it.
+          BREW_PREFIX="$(brew --prefix)"
+          # RC5: fail hard if a critical codec is missing rather than shipping
+          # a jar that silently lacks it.
+          cp -L "$BREW_PREFIX"/lib/libjpeg.*.dylib       out/
+          cp -L "$BREW_PREFIX"/lib/libpng16.*.dylib      out/
+          cp -L "$BREW_PREFIX"/lib/libtiff.*.dylib       out/
+          cp -L "$BREW_PREFIX"/lib/libwebp.*.dylib       out/ 2>/dev/null || true
+          cp -L "$BREW_PREFIX"/lib/libzstd.*.dylib       out/ 2>/dev/null || true
+          cp -L "$BREW_PREFIX"/lib/liblzma.*.dylib       out/ 2>/dev/null || true
+          cp -L "$BREW_PREFIX"/lib/libLerc.*.dylib       out/ 2>/dev/null || true
+          cp -L "$BREW_PREFIX"/lib/libjbig.*.dylib       out/ 2>/dev/null || true
+          cp -L "$BREW_PREFIX"/lib/libdeflate.*.dylib    out/ 2>/dev/null || true
+          # libsharpyuv is a transitive of libwebp itself (webp 1.3+)
+          cp -L "$BREW_PREFIX"/lib/libsharpyuv.*.dylib   out/ 2>/dev/null || true
+          ls -la out/
+
+      - name: Architecture of every produced dylib (the whole point of this probe)
+        run: |
+          echo "=== lipo -archs ==="
+          for f in out/*.dylib; do
+            printf '%-32s ' "$(basename "$f")"; lipo -archs "$f"
+          done
+          echo "=== file ==="
+          file out/*.dylib
+          echo "=== gate: libtesseract + libleptonica must be x86_64 ==="
+          for f in out/libtesseract.5.dylib out/libleptonica.6.dylib; do
+            lipo -archs "$f" | grep -qw x86_64 || { echo "NOT x86_64: $f"; exit 1; }
+          done
+          echo "OK: Intel tier is x86_64"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: darwin-intel-probe
+          path: out/
