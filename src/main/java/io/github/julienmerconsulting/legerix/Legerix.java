@@ -167,11 +167,16 @@ public final class Legerix {
      * @throws IOException if the cache directory cannot be created, a bundled
      *         resource is missing from the classpath, or extraction to disk
      *         fails (e.g. disk full, permission denied)
+     * @throws IllegalStateException if tess4j is on the classpath — see
+     *         {@link #refuseTess4j()}: Legerix does not work behind tess4j and
+     *         refuses to pretend it does
      */
     public static synchronized Path loadNatives() throws IOException {
         if (loaded) {
             return extractionDir;
         }
+
+        refuseTess4j();
 
         final OS os = OS.getCurrent();
         final Arch arch = Arch.getCurrent();
@@ -349,6 +354,63 @@ public final class Legerix {
     private static String cacheVersion() {
         final String v = Legerix.class.getPackage().getImplementationVersion();
         return v != null ? v : DEV_CACHE_VERSION;
+    }
+
+    /**
+     * Refuses to run when tess4j is on the classpath. No opt-out.
+     *
+     * <p>tess4j resolves {@code libtesseract} by short name through JNA. JNA
+     * pools every candidate found on the search path and keeps the highest
+     * parsed version, so on any host with a system Tesseract (apt, yum,
+     * brew) the system library wins over the one Legerix just extracted,
+     * and its {@code NEEDED liblept.so.5} drags in a second Leptonica with a
+     * different {@code Pix} layout: SIGSEGV in {@code pixDestroy} the first
+     * time a Pix crosses the two (Legerix#20). Legerix cannot fix this from
+     * its side of the fence, and pretending to work is worse than refusing.
+     *
+     * <p>The supported way to consume Legerix is a binding that loads the
+     * extracted files by absolute path and nothing else:
+     * <a href="https://github.com/oculix-org/Octachorix">Octachorix</a>
+     * ({@code io.github.oculix-org:octachorix}), a Tesseract C API binding
+     * with no short-name lookup, no search path, no fallback, a session per
+     * thread, text + geometry + confidences in one pass. Point its
+     * {@code Scribe.builder()} at {@link #loadNatives()}'s directory and
+     * {@link #getTessdataPath()}.
+     */
+    private static void refuseTess4j() {
+        final String[] probes = {
+            "net.sourceforge.tess4j.Tesseract",
+            "net.sourceforge.tess4j.Tesseract1",
+            "net.sourceforge.tess4j.TessAPI",
+        };
+        final ClassLoader[] loaders = {
+            Thread.currentThread().getContextClassLoader(),
+            Legerix.class.getClassLoader(),
+        };
+        for (final String probe : probes) {
+            for (final ClassLoader loader : loaders) {
+                if (loader == null) continue;
+                try {
+                    Class.forName(probe, false, loader);
+                } catch (ClassNotFoundException | LinkageError e) {
+                    continue;
+                }
+                throw new IllegalStateException(
+                    "Legerix: tess4j is on the classpath (" + probe + ").\n"
+                    + "  tess4j resolves libtesseract by short name and binds the SYSTEM Tesseract\n"
+                    + "  instead of the bundled one on any host that has one (apt, yum, brew), then\n"
+                    + "  crashes on the first Pix that crosses two Leptonicas (Legerix#20).\n"
+                    + "  Legerix refuses to run behind it.\n"
+                    + "\n"
+                    + "  Use Octachorix instead: io.github.oculix-org:octachorix\n"
+                    + "  https://github.com/oculix-org/Octachorix\n"
+                    + "  A Tesseract C API binding that loads libtesseract and libleptonica by absolute\n"
+                    + "  path only (no short-name lookup, no search path, no fallback), keeps one\n"
+                    + "  session per thread, and returns text, boxes and confidences in a single pass.\n"
+                    + "  Point Scribe.builder() at Legerix.loadNatives() and Legerix.getTessdataPath(),\n"
+                    + "  and remove tess4j from your dependencies.");
+            }
+        }
     }
 
     // -- internals ----------------------------------------------------------
