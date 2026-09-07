@@ -294,11 +294,15 @@ jobs:
           path: out/
 
   # ----- macOS x86_64 -------------------------------------------------------
-  # Use macos-latest (same as Apertix) instead of pinning macos-13 explicitly:
-  # the macos-13 free-tier queue is now saturated, while macos-latest gets
-  # picked up immediately. Verified Intel-compatible by upstream Apertix.
+  # macos-15-intel, NOT macos-latest: since macos-14 became "latest" the
+  # runner is Apple Silicon, and this job compiled arm64 dylibs while
+  # labelling them Intel (5.5.0-8 and 5.5.0-9 darwin tiers: Mach-O cputype
+  # 0x0100000C on both libtesseract and libleptonica). Proven by
+  # probe-macos-intel.yml run 34055801760: same steps on macos-15-intel
+  # yield x86_64 for all 16 files. macos-13 is retired; the Intel runners
+  # (macos-15-intel, macos-26-intel) stay free until August 2027.
   build_macos_x64:
-    runs-on: macos-latest
+    runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v4
 
