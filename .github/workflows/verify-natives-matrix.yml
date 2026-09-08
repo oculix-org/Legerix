@@ -61,8 +61,8 @@ jobs:
         if: matrix.resource_dir == 'linux-x86-64'
         shell: bash
         run: |
-          mkdir -p src/main/resources/linux-x86-64
-          cd src/main/resources/linux-x86-64
+          mkdir -p src/main/resources/META-INF/legerix/natives/linux-x86-64
+          cd src/main/resources/META-INF/legerix/natives/linux-x86-64
           curl -sSL -o libtesseract.so.5 \
             https://github.com/oculix-org/Legerix/releases/download/v5.5.0-9-DO-NOT-USE/libtesseract.so.5-linux-x86-64
           curl -sSL -o libleptonica.so.6 \
@@ -73,8 +73,8 @@ jobs:
         if: matrix.resource_dir == 'darwin-aarch64'
         shell: bash
         run: |
-          mkdir -p src/main/resources/darwin-aarch64
-          cd src/main/resources/darwin-aarch64
+          mkdir -p src/main/resources/META-INF/legerix/natives/darwin-aarch64
+          cd src/main/resources/META-INF/legerix/natives/darwin-aarch64
           curl -sSL -o libtesseract.5.dylib \
             https://github.com/oculix-org/Legerix/releases/download/v5.5.0-9-DO-NOT-USE/libtesseract.5-darwin-aarch64.dylib
           curl -sSL -o libleptonica.6.dylib \
@@ -88,16 +88,19 @@ jobs:
         if: matrix.resource_dir == 'win32-x86-64'
         shell: bash
         run: |
-          mkdir -p src/main/resources/win32-x86-64
+          mkdir -p src/main/resources/META-INF/legerix/natives/win32-x86-64
           curl -sSL -o legerix-win-x86-64.zip \
             https://github.com/oculix-org/Legerix/releases/download/v5.5.0-9-DO-NOT-USE/legerix-win-x86-64.zip
-          unzip -o legerix-win-x86-64.zip -d src/main/resources/win32-x86-64/
-          ls -la src/main/resources/win32-x86-64/
+          unzip -o legerix-win-x86-64.zip -d src/main/resources/META-INF/legerix/natives/win32-x86-64/
+          ls -la src/main/resources/META-INF/legerix/natives/win32-x86-64/
 
       # ── Fetch traineddata ──────────────────────────────────────────
+      - name: Write per-tier natives manifest (Legerix#21)
+        run: LEGERIX_ALLOW_EMPTY_TIERS=1 bash ./scripts/write-natives-manifest.sh src/main/resources/META-INF/legerix/natives
+
       - name: Fetch traineddata (5 bundled languages)
         shell: bash
-        run: bash ./scripts/fetch-traineddata.sh src/main/resources/tessdata
+        run: bash ./scripts/fetch-traineddata.sh src/main/resources/META-INF/legerix/tessdata
 
       # ── Install system Tesseract (conditionnel matrix) ─────────────
       - name: Install system Tesseract (Ubuntu — apt)
