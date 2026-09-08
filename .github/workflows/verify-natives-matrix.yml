@@ -96,7 +96,11 @@ jobs:
 
       # ── Fetch traineddata ──────────────────────────────────────────
       - name: Write per-tier natives manifest (Legerix#21)
-        run: LEGERIX_ALLOW_EMPTY_TIERS=1 bash ./scripts/write-natives-manifest.sh src/main/resources/META-INF/legerix/natives
+        # Through env:, not an inline VAR=value prefix: this step runs under
+        # pwsh on the Windows runner, where that prefix is a syntax error.
+        env:
+          LEGERIX_ALLOW_EMPTY_TIERS: '1'
+        run: bash ./scripts/write-natives-manifest.sh src/main/resources/META-INF/legerix/natives
 
       - name: Fetch traineddata (5 bundled languages)
         shell: bash
