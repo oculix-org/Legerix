@@ -1,8 +1,13 @@
-name: Octachorix theorem (#20) — Linux modern + legacy
+name: Octachorix theorem (#20) — fresh natives, Linux modern + legacy + macOS Intel
 
-# Joue ScribeSystemInterferenceTest d'Octachorix sur les deux tiers Linux,
-# avec un tesseract apt installé : la lib chargée doit être la nôtre (5.5.0),
-# pas celle du système. Même staging que verify-natives-matrix.yml.
+# Builds Leptonica + Tesseract from source on three runners, exactly as
+# build.yml does (the build jobs below are build.yml's, copied verbatim,
+# without the release), then runs Octachorix's test suite against the files
+# just produced, with a system Tesseract installed NEXT to them: apt on
+# Linux, brew on macOS. The library actually bound must be ours (5.5.0),
+# never the neighbour's. Nothing is downloaded from a release and nothing
+# is published: this run tests what THIS commit builds, not what the last
+# release shipped.
 
 on:
   workflow_dispatch:
@@ -11,18 +16,230 @@ on:
       - fix/20-runpath-and-verify
 
 jobs:
+  # ----- Linux x86_64 modern (Ubuntu 24.04, glibc >= 2.38) ------------------
+  # build.yml: build_linux_x64
+  build_linux_x64:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: 17
+          distribution: temurin
+
+      - name: Get Version Info
+        run: |
+          echo "TESSERACT_VERSION=$(mvn build-helper:parse-version org.apache.maven.plugins:maven-help-plugin:3.2.0:evaluate -Dexpression=tesseract.version.long -q -DforceStdout)" >> $GITHUB_ENV
+          echo "LEPTONICA_VERSION=$(mvn build-helper:parse-version org.apache.maven.plugins:maven-help-plugin:3.2.0:evaluate -Dexpression=leptonica.version -q -DforceStdout)" >> $GITHUB_ENV
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -q -y
+          sudo apt-get install -q -y \
+            build-essential autoconf automake libtool pkg-config \
+            libpng-dev libjpeg-dev libtiff-dev zlib1g-dev \
+            libwebp-dev libzstd-dev liblzma-dev liblerc-dev libjbig-dev libdeflate-dev \
+            curl patchelf
+
+      - name: Build leptonica + tesseract
+        run: |
+          PREFIX="$RUNNER_TEMP/legerix-prefix"
+          mkdir -p "$PREFIX"
+          ./scripts/build-leptonica.sh "$LEPTONICA_VERSION" "$PREFIX"
+          ./scripts/build-tesseract.sh "$TESSERACT_VERSION" "$PREFIX"
+          mkdir -p out
+          cp -L "$PREFIX/lib/libleptonica.so.6" out/
+          cp -L "$PREFIX/lib/libtesseract.so.5" out/
+
+      - name: Bundle transitive codec deps (jpeg, png, tiff, zlib)
+        run: |
+          LIB_DIR="/usr/lib/x86_64-linux-gnu"
+          cp -L "$LIB_DIR"/libjpeg.so.*     out/ 2>/dev/null || true
+          cp -L "$LIB_DIR"/libpng16.so.*    out/ 2>/dev/null || true
+          cp -L "$LIB_DIR"/libtiff.so.*     out/ 2>/dev/null || true
+          cp -L "$LIB_DIR"/libz.so.*        out/ 2>/dev/null || true
+          cp -L "$LIB_DIR"/libwebp.so.*     out/ 2>/dev/null || true
+          cp -L "$LIB_DIR"/libzstd.so.*     out/ 2>/dev/null || true
+          cp -L "$LIB_DIR"/liblzma.so.*     out/ 2>/dev/null || true
+          cp -L "$LIB_DIR"/libLerc.so.*     out/ 2>/dev/null || true
+          cp -L "$LIB_DIR"/libjbig.so.*     out/ 2>/dev/null || true
+          cp -L "$LIB_DIR"/libdeflate.so.*  out/ 2>/dev/null || true
+          cp -L "$LIB_DIR"/libsharpyuv.so.* out/ 2>/dev/null || true
+          ls -la out/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fresh-linux-x86-64
+          path: out/
+
+  # ----- Linux x86_64 legacy (manylinux_2_28 container, glibc <= 2.28) ------
+  # build.yml: build_linux_x64_legacy
+  build_linux_x64_legacy:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: 17
+          distribution: temurin
+
+      - name: Get Version Info
+        run: |
+          echo "TESSERACT_VERSION=$(mvn build-helper:parse-version org.apache.maven.plugins:maven-help-plugin:3.2.0:evaluate -Dexpression=tesseract.version.long -q -DforceStdout)" >> $GITHUB_ENV
+          echo "LEPTONICA_VERSION=$(mvn build-helper:parse-version org.apache.maven.plugins:maven-help-plugin:3.2.0:evaluate -Dexpression=leptonica.version -q -DforceStdout)" >> $GITHUB_ENV
+
+      - name: Build self-contained (static codecs) in manylinux_2_28 (x86_64)
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/io -w /io \
+            -e TESSERACT_VERSION=${{ env.TESSERACT_VERSION }} \
+            -e LEPTONICA_VERSION=${{ env.LEPTONICA_VERSION }} \
+            quay.io/pypa/manylinux_2_28_x86_64 \
+            /bin/bash -ec '
+              yum install -y -q \
+                cmake nasm autoconf automake libtool pkgconfig \
+                curl tar gzip make gcc gcc-c++
+              bash ./scripts/build-self-contained-local.sh
+              mkdir -p out
+              cp -L src/main/resources/linux-x86-64-legacy/libleptonica.so.6 out/
+              cp -L src/main/resources/linux-x86-64-legacy/libtesseract.so.5 out/
+              echo "=== NEEDED of libtesseract.so.5 (no codec expected) ==="
+              readelf -d out/libtesseract.so.5 | grep NEEDED || true
+              if readelf -d out/libtesseract.so.5 out/libleptonica.so.6 | grep -qE "NEEDED.*(libjpeg|libpng|libtiff|libwebp|libzstd|liblzma|libdeflate)"; then
+                echo "ERROR: static link failed — a codec is still in DT_NEEDED (#350 would reproduce)"
+                exit 1
+              fi
+              echo "OK: legacy x86-64 natives are self-contained (no codec DT_NEEDED)"
+              ls -la out/
+            '
+
+      - name: Verify GLIBC compatibility (must be <= 2.28)
+        run: |
+          for SO in out/*.so.*; do
+            ALL=$(objdump -T "$SO" | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sort -Vu || true)
+            MAX=$(printf "%s" "$ALL" | tail -1)
+            echo "=== $SO max GLIBC: $MAX ==="
+            HIGHEST=$(printf "%s\nGLIBC_2.28\n" "$MAX" | sort -V | tail -1)
+            if [ "$HIGHEST" != "GLIBC_2.28" ]; then
+              echo "ERROR: $SO requires $MAX > GLIBC_2.28"
+              exit 1
+            fi
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fresh-linux-x86-64-legacy
+          path: out/
+
+  # ----- macOS x86_64 (Intel) -----------------------------------------------
+  # build.yml: build_macos_x64, on macos-15-intel (the darwin tier is the
+  # Intel payload; macos-latest is Apple Silicon since macos-14).
+  build_macos_x64:
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: 17
+          distribution: temurin
+
+      - name: Runner architecture (sanity)
+        run: |
+          uname -m
+          if [ "$(uname -m)" != "x86_64" ]; then
+            echo "ERROR: expected an Intel runner, got $(uname -m)"
+            exit 1
+          fi
+
+      - name: Get Version Info
+        run: |
+          echo "TESSERACT_VERSION=$(mvn build-helper:parse-version org.apache.maven.plugins:maven-help-plugin:3.2.0:evaluate -Dexpression=tesseract.version.long -q -DforceStdout)" >> $GITHUB_ENV
+          echo "LEPTONICA_VERSION=$(mvn build-helper:parse-version org.apache.maven.plugins:maven-help-plugin:3.2.0:evaluate -Dexpression=leptonica.version -q -DforceStdout)" >> $GITHUB_ENV
+
+      - name: Install build dependencies
+        run: |
+          brew install autoconf automake libtool pkg-config \
+                       libpng jpeg libtiff \
+                       webp xz zstd jbigkit libdeflate
+
+      - name: Build leptonica + tesseract
+        run: |
+          PREFIX="$RUNNER_TEMP/legerix-prefix"
+          mkdir -p "$PREFIX"
+          ./scripts/build-leptonica.sh "$LEPTONICA_VERSION" "$PREFIX"
+          ./scripts/build-tesseract.sh "$TESSERACT_VERSION" "$PREFIX"
+          mkdir -p out
+          cp -L "$PREFIX/lib/libleptonica.6.dylib" out/
+          cp -L "$PREFIX/lib/libtesseract.5.dylib" out/
+
+      - name: Rewrite install names + codesign (relocatable dylibs)
+        run: |
+          install_name_tool -id "@loader_path/libleptonica.6.dylib" out/libleptonica.6.dylib
+          install_name_tool -id "@loader_path/libtesseract.5.dylib" out/libtesseract.5.dylib
+          install_name_tool -change "$RUNNER_TEMP/legerix-prefix/lib/libleptonica.6.dylib" \
+                                    "@loader_path/libleptonica.6.dylib" \
+                                    out/libtesseract.5.dylib
+          codesign -f -s - out/libleptonica.6.dylib
+          codesign -f -s - out/libtesseract.5.dylib
+
+      - name: Bundle transitive codec deps from homebrew
+        run: |
+          BREW_PREFIX="$(brew --prefix)"
+          cp -L "$BREW_PREFIX"/lib/libjpeg.*.dylib       out/
+          cp -L "$BREW_PREFIX"/lib/libpng16.*.dylib      out/
+          cp -L "$BREW_PREFIX"/lib/libtiff.*.dylib       out/
+          cp -L "$BREW_PREFIX"/lib/libwebp.*.dylib       out/ 2>/dev/null || true
+          cp -L "$BREW_PREFIX"/lib/libzstd.*.dylib       out/ 2>/dev/null || true
+          cp -L "$BREW_PREFIX"/lib/liblzma.*.dylib       out/ 2>/dev/null || true
+          cp -L "$BREW_PREFIX"/lib/libLerc.*.dylib       out/ 2>/dev/null || true
+          cp -L "$BREW_PREFIX"/lib/libjbig.*.dylib       out/ 2>/dev/null || true
+          cp -L "$BREW_PREFIX"/lib/libdeflate.*.dylib    out/ 2>/dev/null || true
+          cp -L "$BREW_PREFIX"/lib/libsharpyuv.*.dylib   out/ 2>/dev/null || true
+          ls -la out/
+
+      - name: Architecture of every produced dylib
+        run: |
+          for f in out/*.dylib; do
+            printf '%-40s %s\n' "$(basename "$f")" "$(lipo -archs "$f")"
+            if [ "$(lipo -archs "$f")" != "x86_64" ]; then
+              echo "ERROR: $f is not x86_64"
+              exit 1
+            fi
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fresh-darwin
+          path: out/
+
+  # ----- The theorem, on what the three jobs above just built ---------------
   theorem:
+    needs: [build_linux_x64, build_linux_x64_legacy, build_macos_x64]
     strategy:
       fail-fast: false
       matrix:
         include:
           - tier: linux-x86-64
             os: ubuntu-24.04
+            artifact: fresh-linux-x86-64
+            tesseract: libtesseract.so.5
+            leptonica: libleptonica.so.6
           - tier: linux-x86-64-legacy
             os: ubuntu-22.04
+            artifact: fresh-linux-x86-64-legacy
+            tesseract: libtesseract.so.5
+            leptonica: libleptonica.so.6
+          - tier: darwin
+            os: macos-15-intel
+            artifact: fresh-darwin
+            tesseract: libtesseract.5.dylib
+            leptonica: libleptonica.6.dylib
 
     runs-on: ${{ matrix.os }}
-    name: ${{ matrix.tier }} + apt tesseract
+    name: ${{ matrix.tier }} + system tesseract
 
     steps:
       - uses: actions/checkout@v4
@@ -37,25 +254,37 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Stage natives (${{ matrix.tier }}) from v5.5.0-9-DO-NOT-USE
-        run: |
-          mkdir -p natives
-          curl -sSL -o natives/libtesseract.so.5 https://github.com/oculix-org/Legerix/releases/download/v5.5.0-9-DO-NOT-USE/libtesseract.so.5-${{ matrix.tier }}
-          curl -sSL -o natives/libleptonica.so.6 https://github.com/oculix-org/Legerix/releases/download/v5.5.0-9-DO-NOT-USE/libleptonica.so.6-${{ matrix.tier }}
-          bash ./scripts/fetch-traineddata.sh tessdata
+      - name: Natives built by this run (${{ matrix.artifact }})
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: natives
 
-      - name: Install system Tesseract (apt)
+      - name: Fetch traineddata (5 bundled languages)
+        run: |
+          bash ./scripts/fetch-traineddata.sh tessdata
+          ls -la natives/ tessdata/
+
+      - name: Install system Tesseract (Linux — apt)
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update -q
           sudo apt-get install -q -y tesseract-ocr
           tesseract --version 2>&1 | head -1
 
-      - name: mvn test
+      - name: Install system Tesseract (macOS — brew)
+        if: runner.os == 'macOS'
+        run: |
+          brew install tesseract
+          tesseract --version 2>&1 | head -1
+          ls -la "$(brew --prefix)"/lib/libtesseract* "$(brew --prefix)"/lib/libleptonica* || true
+
+      - name: mvn test (Octachorix, bound to the fresh natives by absolute path)
         working-directory: octachorix
         run: >
           mvn -B test
-          -DargLine="-Doctachorix.test.libs.tesseract=${{ github.workspace }}/natives/libtesseract.so.5
-          -Doctachorix.test.libs.leptonica=${{ github.workspace }}/natives/libleptonica.so.6
+          -DargLine="-Doctachorix.test.libs.tesseract=${{ github.workspace }}/natives/${{ matrix.tesseract }}
+          -Doctachorix.test.libs.leptonica=${{ github.workspace }}/natives/${{ matrix.leptonica }}
           -Doctachorix.test.libs.tessdata=${{ github.workspace }}/tessdata
           -Doctachorix.test.expectedVersion=5.5.0"
 
