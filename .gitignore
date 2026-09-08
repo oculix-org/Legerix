@@ -21,15 +21,12 @@ _legacy-prefix/
 out/
 
 # Native artifacts staged in resources are produced by CI; keep the directories
-# (with .gitkeep) but ignore the built libraries themselves.
-src/main/resources/linux-x86-64/*.so*
-src/main/resources/linux-x86-64-legacy/*.so*
-src/main/resources/linux-aarch64/*.so*
-src/main/resources/linux-aarch64-legacy/*.so*
-src/main/resources/darwin/*.dylib
-src/main/resources/darwin-aarch64/*.dylib
-src/main/resources/win32-x86-64/*.dll
-src/main/resources/tessdata/*.traineddata
+# (with .gitkeep) but ignore the built libraries themselves. Legerix owns
+# META-INF/legerix/ and nothing else in the jar (Legerix#21).
+src/main/resources/META-INF/legerix/natives/*/*.so*
+src/main/resources/META-INF/legerix/natives/*/*.dylib
+src/main/resources/META-INF/legerix/natives/*/*.dll
+src/main/resources/META-INF/legerix/tessdata/*.traineddata
 
 # Per-tier natives manifest, written by scripts/write-natives-manifest.sh at build time.
-src/main/resources/*/legerix-natives.txt
+src/main/resources/META-INF/legerix/natives/*/legerix-natives.txt
