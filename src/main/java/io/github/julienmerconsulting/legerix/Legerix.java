@@ -138,6 +138,12 @@ public final class Legerix {
     /** Cached, idempotent extraction directory. */
     private static volatile Path extractionDir;
     private static volatile String detectedTier;
+    // The two files loadNatives() System.load()s, by absolute path. Published
+    // through getTesseractLibraryPath() / getLeptonicaLibraryPath() so that a
+    // consumer binding by absolute path (Octachorix) never has to list the
+    // extraction directory and guess which file is which.
+    private static volatile Path tesseractLibraryPath;
+    private static volatile Path leptonicaLibraryPath;
     private static volatile boolean loaded;
 
     private Legerix() {}
@@ -262,8 +268,10 @@ public final class Legerix {
         // dynamic linker walks tesseract's dependencies (which sidesteps
         // any RUNPATH corruption that libtool may have produced at build
         // time and any LC_ID_DYLIB pointing at the CI runner on macOS).
-        loadBundledLib(target.resolve(leptonicaFileName(os)).toAbsolutePath().toString(), os);
-        loadBundledLib(target.resolve(tesseractFileName(os)).toAbsolutePath().toString(), os);
+        final Path leptonica = target.resolve(leptonicaFileName(os)).toAbsolutePath();
+        final Path tesseract = target.resolve(tesseractFileName(os)).toAbsolutePath();
+        loadBundledLib(leptonica.toString(), os);
+        loadBundledLib(tesseract.toString(), os);
 
         // Verify what actually loaded matches what we shipped, by calling
         // TessVersion() on the exact file we just System.load'd — not via
@@ -272,8 +280,10 @@ public final class Legerix {
         // version system library. Passing the absolute path to
         // NativeLibrary.getInstance() bypasses matchLibrary entirely and
         // guarantees the handle points at our extracted binary.
-        assertBundledTesseract(target.resolve(tesseractFileName(os)).toAbsolutePath().toString());
+        assertBundledTesseract(tesseract.toString());
 
+        leptonicaLibraryPath = leptonica;
+        tesseractLibraryPath = tesseract;
         extractionDir = target;
         loaded = true;
 
@@ -302,6 +312,52 @@ public final class Legerix {
             }
         }
         return cacheDir().resolve(cacheVersion()).resolve("tessdata");
+    }
+
+    /**
+     * Returns the absolute path of the bundled Tesseract shared library that
+     * {@link #loadNatives()} loaded: {@code tesseract55.dll} on Windows,
+     * {@code libtesseract.so.5} on Linux, {@code libtesseract.5.dylib} on
+     * macOS, inside the extraction directory of this JVM's tier. Triggers
+     * {@link #loadNatives()} if it has not been called yet.
+     *
+     * <p>This is the file to hand to a binding that loads by absolute path
+     * (Octachorix). Do not list the extraction directory and pick a file by
+     * name pattern: the names differ per platform, aliases may or may not be
+     * present depending on the publish channel, and Legerix already knows
+     * exactly which file it loaded.
+     *
+     * @return the absolute path of the loaded {@code libtesseract}
+     * @throws IllegalStateException if natives have not been loaded yet and
+     *         the implicit {@link #loadNatives()} call fails
+     */
+    public static Path getTesseractLibraryPath() {
+        ensureLoaded();
+        return tesseractLibraryPath;
+    }
+
+    /**
+     * Returns the absolute path of the bundled Leptonica shared library that
+     * {@link #loadNatives()} loaded, the dependency of the file returned by
+     * {@link #getTesseractLibraryPath()}. Same contract, same rationale.
+     *
+     * @return the absolute path of the loaded {@code libleptonica}
+     * @throws IllegalStateException if natives have not been loaded yet and
+     *         the implicit {@link #loadNatives()} call fails
+     */
+    public static Path getLeptonicaLibraryPath() {
+        ensureLoaded();
+        return leptonicaLibraryPath;
+    }
+
+    private static void ensureLoaded() {
+        if (!loaded) {
+            try {
+                loadNatives();
+            } catch (final IOException e) {
+                throw new IllegalStateException("loadNatives() failed", e);
+            }
+        }
     }
 
     /**
