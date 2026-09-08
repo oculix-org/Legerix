@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Download lightweight traineddata models from the upstream tessdata_fast repo
-# and stage them under src/main/resources/tessdata/.
+# and stage them under src/main/resources/META-INF/legerix/tessdata/.
 #
 # Bundled languages (covers ~80% of the world population, ~12 MB total):
 #   eng     — English
@@ -10,11 +10,11 @@
 #   hin     — Hindi
 #
 # Usage:  fetch-traineddata.sh [output-dir]
-# Default output dir: src/main/resources/tessdata
+# Default output dir: src/main/resources/META-INF/legerix/tessdata
 
 set -euo pipefail
 
-OUTDIR="${1:-src/main/resources/tessdata}"
+OUTDIR="${1:-src/main/resources/META-INF/legerix/tessdata}"
 BASE_URL="https://github.com/tesseract-ocr/tessdata_fast/raw/main"
 LANGS=(eng fra spa chi_sim hin)
 
