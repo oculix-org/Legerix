@@ -41,7 +41,7 @@ jobs:
             build-essential autoconf automake libtool pkg-config \
             libpng-dev libjpeg-dev libtiff-dev zlib1g-dev \
             libwebp-dev libzstd-dev liblzma-dev liblerc-dev libjbig-dev libdeflate-dev \
-            curl
+            curl patchelf
 
       - name: Build leptonica + tesseract
         run: |
@@ -179,7 +179,7 @@ jobs:
             build-essential autoconf automake libtool pkg-config \
             libpng-dev libjpeg-dev libtiff-dev zlib1g-dev \
             libwebp-dev libzstd-dev liblzma-dev liblerc-dev libjbig-dev libdeflate-dev \
-            curl
+            curl patchelf
 
       - name: Build leptonica + tesseract
         run: |
@@ -294,11 +294,15 @@ jobs:
           path: out/
 
   # ----- macOS x86_64 -------------------------------------------------------
-  # Use macos-latest (same as Apertix) instead of pinning macos-13 explicitly:
-  # the macos-13 free-tier queue is now saturated, while macos-latest gets
-  # picked up immediately. Verified Intel-compatible by upstream Apertix.
+  # macos-15-intel, NOT macos-latest: since macos-14 became "latest" the
+  # runner is Apple Silicon, and this job compiled arm64 dylibs while
+  # labelling them Intel (5.5.0-8 and 5.5.0-9 darwin tiers: Mach-O cputype
+  # 0x0100000C on both libtesseract and libleptonica). Proven by
+  # probe-macos-intel.yml run 34055801760: same steps on macos-15-intel
+  # yield x86_64 for all 16 files. macos-13 is retired; the Intel runners
+  # (macos-15-intel, macos-26-intel) stay free until August 2027.
   build_macos_x64:
-    runs-on: macos-latest
+    runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v4
 
@@ -336,6 +340,35 @@ jobs:
           cp -L "$PREFIX/lib/libleptonica.6.dylib" out/
           cp -L "$PREFIX/lib/libtesseract.5.dylib" out/
 
+      - name: Rewrite install names + codesign (relocatable dylibs)
+        run: |
+          # From David Young's rapport Legerix#20 (RC2, RC3):
+          # - Fresh-built dylibs record LC_ID_DYLIB = $PREFIX/lib/... (the CI
+          #   runner path) and libtesseract's dependency on libleptonica points
+          #   at the same absolute prefix. Neither exists on a user's machine.
+          # - install_name_tool -id + -change makes both self-relative via
+          #   @loader_path so dyld resolves them from wherever Legerix extracts.
+          # - codesign is required on arm64 after install_name_tool touches the
+          #   Mach-O; without it dyld rejects the modified binary.
+          install_name_tool -id "@loader_path/libleptonica.6.dylib" out/libleptonica.6.dylib
+          install_name_tool -id "@loader_path/libtesseract.5.dylib" out/libtesseract.5.dylib
+          install_name_tool -change "$RUNNER_TEMP/legerix-prefix/lib/libleptonica.6.dylib" \
+                                    "@loader_path/libleptonica.6.dylib" \
+                                    out/libtesseract.5.dylib
+          codesign -f -s - out/libleptonica.6.dylib
+          codesign -f -s - out/libtesseract.5.dylib
+
+          # RC3: expose unversioned aliases so tess4j's Native.load("tesseract")
+          # matches without going through the Legerix loader.
+          # DO NOT REMOVE — David Young identified in Legerix#20 that these
+          # aliases are load-bearing for assertBundledTesseract() on macOS
+          # (the payload ships libtesseract.5.dylib but JNA short-name lookup
+          # asks for libtesseract.dylib, which the version-before-extension
+          # convention prevents from ever matching without an unversioned
+          # alias). They also protect external consumers of tess4j directly.
+          ln -sf libleptonica.6.dylib out/libleptonica.dylib
+          ln -sf libtesseract.5.dylib out/libtesseract.dylib
+
       - name: Bundle transitive codec deps from homebrew
         run: |
           # Bundle the homebrew dylibs leptonica/tesseract linked against,
@@ -345,9 +378,13 @@ jobs:
           # Note: libz ships natively on macOS at /usr/lib/libz.dylib so no
           # bundling needed for it.
           BREW_PREFIX="$(brew --prefix)"
-          cp -L "$BREW_PREFIX"/lib/libjpeg.*.dylib       out/ 2>/dev/null || true
-          cp -L "$BREW_PREFIX"/lib/libpng16.*.dylib      out/ 2>/dev/null || true
-          cp -L "$BREW_PREFIX"/lib/libtiff.*.dylib       out/ 2>/dev/null || true
+          # RC5: fail hard if a critical codec is missing rather than shipping
+          # a jar that silently lacks it. libjpeg / libpng / libtiff are direct
+          # dependencies of libleptonica — a missing one produces UnsatisfiedLinkError
+          # on the first pixReadPng / pixReadJpeg call, hours after startup.
+          cp -L "$BREW_PREFIX"/lib/libjpeg.*.dylib       out/
+          cp -L "$BREW_PREFIX"/lib/libpng16.*.dylib      out/
+          cp -L "$BREW_PREFIX"/lib/libtiff.*.dylib       out/
           # Transitive deps via libtiff on homebrew (webp, zstd, lzma,
           # Lerc, jbig, deflate). brew installs these as separate formulae
           # under different names; copy what's present.
@@ -407,14 +444,47 @@ jobs:
           cp -L "$PREFIX/lib/libleptonica.6.dylib" out/
           cp -L "$PREFIX/lib/libtesseract.5.dylib" out/
 
+      - name: Rewrite install names + codesign (relocatable dylibs)
+        run: |
+          # From David Young's rapport Legerix#20 (RC2, RC3):
+          # - Fresh-built dylibs record LC_ID_DYLIB = $PREFIX/lib/... (the CI
+          #   runner path) and libtesseract's dependency on libleptonica points
+          #   at the same absolute prefix. Neither exists on a user's machine.
+          # - install_name_tool -id + -change makes both self-relative via
+          #   @loader_path so dyld resolves them from wherever Legerix extracts.
+          # - codesign is required on arm64 after install_name_tool touches the
+          #   Mach-O; without it dyld rejects the modified binary.
+          install_name_tool -id "@loader_path/libleptonica.6.dylib" out/libleptonica.6.dylib
+          install_name_tool -id "@loader_path/libtesseract.5.dylib" out/libtesseract.5.dylib
+          install_name_tool -change "$RUNNER_TEMP/legerix-prefix/lib/libleptonica.6.dylib" \
+                                    "@loader_path/libleptonica.6.dylib" \
+                                    out/libtesseract.5.dylib
+          codesign -f -s - out/libleptonica.6.dylib
+          codesign -f -s - out/libtesseract.5.dylib
+
+          # RC3: expose unversioned aliases so tess4j's Native.load("tesseract")
+          # matches without going through the Legerix loader.
+          # DO NOT REMOVE — David Young identified in Legerix#20 that these
+          # aliases are load-bearing for assertBundledTesseract() on macOS
+          # (the payload ships libtesseract.5.dylib but JNA short-name lookup
+          # asks for libtesseract.dylib, which the version-before-extension
+          # convention prevents from ever matching without an unversioned
+          # alias). They also protect external consumers of tess4j directly.
+          ln -sf libleptonica.6.dylib out/libleptonica.dylib
+          ln -sf libtesseract.5.dylib out/libtesseract.dylib
+
       - name: Bundle transitive codec deps from homebrew
         run: |
           # Same bundling as the x86_64 macOS job, but from the Apple
           # Silicon brew prefix. RPATH=@loader_path resolves at runtime.
           BREW_PREFIX="$(brew --prefix)"
-          cp -L "$BREW_PREFIX"/lib/libjpeg.*.dylib       out/ 2>/dev/null || true
-          cp -L "$BREW_PREFIX"/lib/libpng16.*.dylib      out/ 2>/dev/null || true
-          cp -L "$BREW_PREFIX"/lib/libtiff.*.dylib       out/ 2>/dev/null || true
+          # RC5: fail hard if a critical codec is missing rather than shipping
+          # a jar that silently lacks it. libjpeg / libpng / libtiff are direct
+          # dependencies of libleptonica — a missing one produces UnsatisfiedLinkError
+          # on the first pixReadPng / pixReadJpeg call, hours after startup.
+          cp -L "$BREW_PREFIX"/lib/libjpeg.*.dylib       out/
+          cp -L "$BREW_PREFIX"/lib/libpng16.*.dylib      out/
+          cp -L "$BREW_PREFIX"/lib/libtiff.*.dylib       out/
           # Transitive deps via libtiff on homebrew (webp, zstd, lzma,
           # Lerc, jbig, deflate). brew installs these as separate formulae
           # under different names; copy what's present.
@@ -693,8 +763,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="v${{ steps.version.outputs.VERSION }}"
+          # Mark as pre-release for anything that is clearly a test build.
+          # Keeps "Latest release" pointing at the last real stable tag on the
+          # public releases page, even if a workflow_dispatch from a fix/**
+          # branch produces something like v5.5.0-9-DO-NOT-USE first.
+          PRERELEASE_FLAG=""
+          case "$TAG" in
+              *DO-NOT-USE*|*-rc[0-9]*|*-beta*|*-alpha*|*-SNAPSHOT*)
+                  PRERELEASE_FLAG="--prerelease"
+                  ;;
+          esac
           if ! gh release view "$TAG" > /dev/null 2>&1; then
-            gh release create "$TAG" \
+            gh release create "$TAG" $PRERELEASE_FLAG \
               --title "Legerix ${{ steps.version.outputs.VERSION }}" \
               --notes "Tesseract + Leptonica natives bundled for Linux (x86_64 + aarch64, modern + legacy glibc 2.28), macOS (x86_64 + aarch64) and Windows (x86_64)."
           fi

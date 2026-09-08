@@ -1,9 +1,13 @@
 package io.github.julienmerconsulting.legerix;
 
+import com.sun.jna.Library;
 import com.sun.jna.Native;
 import com.sun.jna.NativeLibrary;
 import com.sun.jna.WString;
 import com.sun.jna.win32.StdCallLibrary;
+
+import java.util.HashMap;
+import java.util.Map;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -134,6 +138,12 @@ public final class Legerix {
     /** Cached, idempotent extraction directory. */
     private static volatile Path extractionDir;
     private static volatile String detectedTier;
+    // The two files loadNatives() System.load()s, by absolute path. Published
+    // through getTesseractLibraryPath() / getLeptonicaLibraryPath() so that a
+    // consumer binding by absolute path (Octachorix) never has to list the
+    // extraction directory and guess which file is which.
+    private static volatile Path tesseractLibraryPath;
+    private static volatile Path leptonicaLibraryPath;
     private static volatile boolean loaded;
 
     private Legerix() {}
@@ -163,11 +173,16 @@ public final class Legerix {
      * @throws IOException if the cache directory cannot be created, a bundled
      *         resource is missing from the classpath, or extraction to disk
      *         fails (e.g. disk full, permission denied)
+     * @throws IllegalStateException if tess4j is on the classpath — see
+     *         {@link #refuseTess4j()}: Legerix does not work behind tess4j and
+     *         refuses to pretend it does
      */
     public static synchronized Path loadNatives() throws IOException {
         if (loaded) {
             return extractionDir;
         }
+
+        refuseTess4j();
 
         final OS os = OS.getCurrent();
         final Arch arch = Arch.getCurrent();
@@ -200,16 +215,54 @@ public final class Legerix {
                     tessdataDir.resolve(lang + ".traineddata"));
         }
 
-        // Make JNA find OUR libs by name, ahead of tess4j's bundled copies.
-        // tess4j's static initializer extracts its own (older) leptonica to
-        // /tmp/tess4j/ and prepends that path to jna.library.path. JNA's
-        // per-library addSearchPath is consulted BEFORE jna.library.path, so
-        // our path wins as long as the file name matches the libname regex
-        // (libtesseract.so.5 matches lib<name>\.so(\.\d+)*).
+        // Best-effort hints for a consumer that would still resolve
+        // tesseract/leptonica by SHORT NAME through JNA. The supported
+        // contract is not this: it is getTesseractLibraryPath() and
+        // getLeptonicaLibraryPath(), absolute paths, which Octachorix binds
+        // without any lookup. tess4j, the short-name consumer these hints
+        // were written for, is refused above. They stay for any other code
+        // calling Native.load("tesseract", ...), and they are hints only.
+        //
+        // How JNA 5.14.0 really resolves a short name, as measured and
+        // corrected by David Young on Legerix#20 (§3 of his report of
+        // 2026-09-04), replacing the mechanism this comment used to cite:
+        //
+        //   1. Two exact-name attempts first: "libtesseract.so" (unversioned)
+        //      in each search directory, jna.library.path included. If the
+        //      file exists and dlopen succeeds, resolution ends there and no
+        //      ranking ever happens. Directory order was never the problem:
+        //      tess4j APPENDS to jna.library.path, ours stays first.
+        //
+        //   2. Only if both exact-name attempts fail, matchLibrary() runs as a
+        //      catch-block fallback. Its filter ANDs isVersionedName(), so an
+        //      unversioned file is not in its pool at all, and among the
+        //      versioned candidates of ALL directories the highest parsed
+        //      version wins: a system libtesseract.so.5.0.3 beats our
+        //      libtesseract.so.5 whatever directory comes first.
+        //
+        // Our August reading, "an unversioned .so loses because no-version
+        // parses lowest", was wrong: it never competes, it is excluded. What
+        // actually failed in August was step 1 itself: the exact-name attempt
+        // FOUND the unversioned symlink of the -8 payload and dlopen failed,
+        // because that payload's RUNPATH was the corrupted literal 'RIGIN' and
+        // the sibling leptonica was unreachable. A load failure read as a
+        // ranking loss. With the $ORIGIN RUNPATH fixed, an unversioned alias
+        // present in the extraction directory does resolve at step 1; when it
+        // is absent, which depends on the publish channel, step 2 hands the
+        // consumer the system library. Hence the getters above: name the
+        // file, do not look it up.
+        //
+        // NEITHER mechanism affects Legerix.loadNatives() itself: the
+        // System.load() calls below use absolute paths and bypass all short-
+        // name resolution, and assertBundledTesseract() below uses
+        // NativeLibrary.getInstance(absolute) for the same reason.
         final String ours = target.toAbsolutePath().toString();
         NativeLibrary.addSearchPath("tesseract", ours);
         NativeLibrary.addSearchPath("leptonica", ours);
         NativeLibrary.addSearchPath("lept", ours);
+        final String existing = System.getProperty("jna.library.path", "");
+        System.setProperty("jna.library.path",
+                existing.isEmpty() ? ours : ours + java.io.File.pathSeparator + existing);
 
         // On Windows, the vcpkg-built leptonica/tesseract DLLs are shims that
         // import sibling DLLs (libleptonica1870.dll, libpng16.dll, ...) from
@@ -225,23 +278,29 @@ public final class Legerix {
             }
         }
 
-        // Load via JNA's NativeLibrary.getInstance() instead of System.load().
-        // This matters because:
-        //   1. JNA loads with RTLD_GLOBAL on Linux/macOS, so leptonica's
-        //      symbols (e.g. pixFindBaselinesGen, introduced in 1.85) become
-        //      globally visible. Otherwise tess4j later loads its own older
-        //      leptonica RTLD_GLOBAL and that one shadows ours, breaking
-        //      tesseract 5.5+ which calls those new functions.
-        //   2. JNA caches the NativeLibrary by name. When tess4j subsequently
-        //      calls Native.loadLibrary("tesseract"), it gets OUR cached
-        //      handle instead of triggering its own classpath extraction.
-        //
-        // Order matters: leptonica first (tesseract.so DT_NEEDED depends on
-        // libleptonica.so.6, and we want OUR copy registered globally before
-        // the dynamic linker resolves that dep).
-        loadViaJna("leptonica", target, leptonicaFileName(os));
-        loadViaJna("tesseract", target, tesseractFileName(os));
+        // Load OUR bundled files by absolute path, in dependency order.
+        // Absolute path bypasses short-name resolution entirely — no system
+        // library can shadow ours. Order matters: leptonica first, so that
+        // tesseract's NEEDED libleptonica.so.6 is already mapped when the
+        // dynamic linker walks tesseract's dependencies (which sidesteps
+        // any RUNPATH corruption that libtool may have produced at build
+        // time and any LC_ID_DYLIB pointing at the CI runner on macOS).
+        final Path leptonica = target.resolve(leptonicaFileName(os)).toAbsolutePath();
+        final Path tesseract = target.resolve(tesseractFileName(os)).toAbsolutePath();
+        loadBundledLib(leptonica.toString(), os);
+        loadBundledLib(tesseract.toString(), os);
 
+        // Verify what actually loaded matches what we shipped, by calling
+        // TessVersion() on the exact file we just System.load'd — not via
+        // short-name JNA resolution which David Young measured (Legerix#20)
+        // to be structurally unable to prefer our copy over a higher-parsed-
+        // version system library. Passing the absolute path to
+        // NativeLibrary.getInstance() bypasses matchLibrary entirely and
+        // guarantees the handle points at our extracted binary.
+        assertBundledTesseract(tesseract.toString());
+
+        leptonicaLibraryPath = leptonica;
+        tesseractLibraryPath = tesseract;
         extractionDir = target;
         loaded = true;
 
@@ -270,6 +329,52 @@ public final class Legerix {
             }
         }
         return cacheDir().resolve(cacheVersion()).resolve("tessdata");
+    }
+
+    /**
+     * Returns the absolute path of the bundled Tesseract shared library that
+     * {@link #loadNatives()} loaded: {@code tesseract55.dll} on Windows,
+     * {@code libtesseract.so.5} on Linux, {@code libtesseract.5.dylib} on
+     * macOS, inside the extraction directory of this JVM's tier. Triggers
+     * {@link #loadNatives()} if it has not been called yet.
+     *
+     * <p>This is the file to hand to a binding that loads by absolute path
+     * (Octachorix). Do not list the extraction directory and pick a file by
+     * name pattern: the names differ per platform, aliases may or may not be
+     * present depending on the publish channel, and Legerix already knows
+     * exactly which file it loaded.
+     *
+     * @return the absolute path of the loaded {@code libtesseract}
+     * @throws IllegalStateException if natives have not been loaded yet and
+     *         the implicit {@link #loadNatives()} call fails
+     */
+    public static Path getTesseractLibraryPath() {
+        ensureLoaded();
+        return tesseractLibraryPath;
+    }
+
+    /**
+     * Returns the absolute path of the bundled Leptonica shared library that
+     * {@link #loadNatives()} loaded, the dependency of the file returned by
+     * {@link #getTesseractLibraryPath()}. Same contract, same rationale.
+     *
+     * @return the absolute path of the loaded {@code libleptonica}
+     * @throws IllegalStateException if natives have not been loaded yet and
+     *         the implicit {@link #loadNatives()} call fails
+     */
+    public static Path getLeptonicaLibraryPath() {
+        ensureLoaded();
+        return leptonicaLibraryPath;
+    }
+
+    private static void ensureLoaded() {
+        if (!loaded) {
+            try {
+                loadNatives();
+            } catch (final IOException e) {
+                throw new IllegalStateException("loadNatives() failed", e);
+            }
+        }
     }
 
     /**
@@ -305,11 +410,80 @@ public final class Legerix {
         return "5.5.0";
     }
 
+    // Development-time fallback for cacheVersion() when running from
+    // target/classes (no jar manifest). MUST be kept in sync with pom.xml's
+    // <version> so that mvn test picks up new natives after every bump.
+    // David Young measured a real user-facing bug on this in Legerix#20:
+    // on upgrade 5.5.0-8 -> 5.5.0-9 the cache was keyed on the bare
+    // "5.5.0" (getTesseractVersion() strips the build suffix), so
+    // extractIfMissing early-returned and users kept the old natives.
+    private static final String DEV_CACHE_VERSION = "5.5.2-1";
+
     // Full Legerix Maven version (e.g. "5.5.0-3"), used as cache key so that
     // bumping only the Legerix build suffix invalidates stale extracted DLLs.
+    // Under mvn test the class loads from target/classes with no manifest, so
+    // getImplementationVersion() returns null — we fall back to DEV_CACHE_VERSION
+    // which includes the suffix, not to getTesseractVersion() which strips it.
     private static String cacheVersion() {
         final String v = Legerix.class.getPackage().getImplementationVersion();
-        return v != null ? v : getTesseractVersion();
+        return v != null ? v : DEV_CACHE_VERSION;
+    }
+
+    /**
+     * Refuses to run when tess4j is on the classpath. No opt-out.
+     *
+     * <p>tess4j resolves {@code libtesseract} by short name through JNA. JNA
+     * pools every candidate found on the search path and keeps the highest
+     * parsed version, so on any host with a system Tesseract (apt, yum,
+     * brew) the system library wins over the one Legerix just extracted,
+     * and its {@code NEEDED liblept.so.5} drags in a second Leptonica with a
+     * different {@code Pix} layout: SIGSEGV in {@code pixDestroy} the first
+     * time a Pix crosses the two (Legerix#20). Legerix cannot fix this from
+     * its side of the fence, and pretending to work is worse than refusing.
+     *
+     * <p>The supported way to consume Legerix is a binding that loads the
+     * extracted files by absolute path and nothing else:
+     * <a href="https://github.com/oculix-org/Octachorix">Octachorix</a>
+     * ({@code io.github.oculix-org:octachorix}), a Tesseract C API binding
+     * with no short-name lookup, no search path, no fallback, a session per
+     * thread, text + geometry + confidences in one pass. Point its
+     * {@code Scribe.builder()} at {@link #loadNatives()}'s directory and
+     * {@link #getTessdataPath()}.
+     */
+    private static void refuseTess4j() {
+        final String[] probes = {
+            "net.sourceforge.tess4j.Tesseract",
+            "net.sourceforge.tess4j.Tesseract1",
+            "net.sourceforge.tess4j.TessAPI",
+        };
+        final ClassLoader[] loaders = {
+            Thread.currentThread().getContextClassLoader(),
+            Legerix.class.getClassLoader(),
+        };
+        for (final String probe : probes) {
+            for (final ClassLoader loader : loaders) {
+                if (loader == null) continue;
+                try {
+                    Class.forName(probe, false, loader);
+                } catch (ClassNotFoundException | LinkageError e) {
+                    continue;
+                }
+                throw new IllegalStateException(
+                    "Legerix: tess4j is on the classpath (" + probe + ").\n"
+                    + "  tess4j resolves libtesseract by short name and binds the SYSTEM Tesseract\n"
+                    + "  instead of the bundled one on any host that has one (apt, yum, brew), then\n"
+                    + "  crashes on the first Pix that crosses two Leptonicas (Legerix#20).\n"
+                    + "  Legerix refuses to run behind it.\n"
+                    + "\n"
+                    + "  Use Octachorix instead: io.github.oculix-org:octachorix\n"
+                    + "  https://github.com/oculix-org/Octachorix\n"
+                    + "  A Tesseract C API binding that loads libtesseract and libleptonica by absolute\n"
+                    + "  path only (no short-name lookup, no search path, no fallback), keeps one\n"
+                    + "  session per thread, and returns text, boxes and confidences in a single pass.\n"
+                    + "  Point Scribe.builder() at Legerix.loadNatives() and Legerix.getTessdataPath(),\n"
+                    + "  and remove tess4j from your dependencies.");
+            }
+        }
     }
 
     // -- internals ----------------------------------------------------------
@@ -478,6 +652,41 @@ public final class Legerix {
         }
     }
 
+    // dlopen(3) flags used to force RTLD_GLOBAL on Linux — see loadBundledLib.
+    private static final int RTLD_LAZY_LINUX   = 0x1;
+    private static final int RTLD_GLOBAL_LINUX = 0x100;
+
+    /**
+     * Load a bundled native library by absolute path. On Linux, force RTLD_GLOBAL
+     * via JNA so our symbols satisfy the DT_NEEDED of libraries the OS loads
+     * later (typically the system libtesseract that tess4j resolves via
+     * short-name lookup). Without RTLD_GLOBAL, System.load() defaults to
+     * RTLD_LOCAL on Linux → our libleptonica is invisible → the dynamic linker
+     * loads a SECOND libleptonica to satisfy the system libtesseract's NEEDED →
+     * two Leptonicas coexist with incompatible Pix struct layouts → SIGSEGV in
+     * pixDestroy when a Pix crosses between the two (measured on Ubuntu 24.04
+     * apt tesseract-ocr, hs_err_pid libleptonica.so.6+0x152f9a pixDestroy+0x1a,
+     * verify-natives-matrix CI run 32595060133 — the "symbol-interposition
+     * hazard" David Young flagged in Legerix#20).
+     *
+     * On macOS: install_name_tool + unversioned symlinks (build.yml commit
+     * 00bad35) already handle the interposition path; keep the plain
+     * System.load which uses dyld's flat namespace semantics.
+     *
+     * On Windows: tess4j's LoadLibs extracts DLLs into %TEMP%\tess4j\ and
+     * binds by absolute path; no short-name resolution → no interposition
+     * risk. Keep System.load.
+     */
+    private static void loadBundledLib(final String absolutePath, final OS os) {
+        if (os == OS.LINUX) {
+            final Map<String, Object> opts = new HashMap<>();
+            opts.put(Library.OPTION_OPEN_FLAGS, RTLD_LAZY_LINUX | RTLD_GLOBAL_LINUX);
+            NativeLibrary.getInstance(absolutePath, opts);
+        } else {
+            System.load(absolutePath);
+        }
+    }
+
     // Minimal JNA binding to Win32 SetDllDirectoryW. Only loaded/initialized
     // on Windows; classloading is lazy so the Native.load call here does not
     // execute on Linux/macOS.
@@ -487,26 +696,56 @@ public final class Legerix {
     }
 
     /**
-     * Load a library via JNA (RTLD_GLOBAL on Linux/macOS) so symbols are
-     * visible to the rest of the process and JNA caches the handle by name.
-     * If JNA can't resolve the name (e.g. because the on-disk file uses a
-     * versioned name JNA's regex doesn't match), fall back to a direct
-     * dlopen-by-path via System.load so we still load *something*.
+     * Read {@code TessVersion()} directly on the extracted bundled libtesseract
+     * at {@code absoluteTesseractPath} — not via JNA short-name resolution,
+     * which David Young measured in Legerix#20 to be structurally unable to
+     * prefer our copy over a higher-parsed-version system library. Passing an
+     * absolute path (a string containing a path separator) to
+     * {@link NativeLibrary#getInstance(String)} makes JNA call {@code dlopen}
+     * (or {@code LoadLibraryW}) on that file directly, bypassing
+     * {@code matchLibrary} entirely.
+     *
+     * <p>Package-private so tests can prove path-identity without going
+     * through reflection.
      */
-    private static void loadViaJna(final String jnaName, final Path dir, final String fileName) {
-        try {
-            NativeLibrary.getInstance(jnaName);
-            return;
-        } catch (final UnsatisfiedLinkError e) {
-            logger.log(Level.FINE, "JNA could not resolve \"" + jnaName + "\" by name, "
-                    + "falling back to System.load on the absolute file path", e);
+    static String getLoadedTesseractVersion(final String absoluteTesseractPath) {
+        final NativeLibrary lib = NativeLibrary.getInstance(absoluteTesseractPath);
+        return lib.getFunction("TessVersion").invokeString(new Object[0], false);
+    }
+
+    /**
+     * Fail loudly at startup if the upstream Tesseract version reported by
+     * the file we just extracted does not match this artifact's declared
+     * version at the MAJOR.MINOR level.
+     *
+     * <p>Path identity is already guaranteed by the caller: we called
+     * {@link #getLoadedTesseractVersion(String)} with the absolute path we
+     * ourselves extracted, so the version we read describes our own binary.
+     * What remains to check is upstream MAJOR.MINOR alignment — the payload
+     * per platform can legitimately differ at the patch level (Windows vcpkg
+     * ships 5.5.2, Linux/macOS from-source ship 5.5.0), so an exact-string
+     * match would false-positive on Windows even against a correct build.
+     */
+    private static void assertBundledTesseract(final String absoluteTesseractPath) {
+        final String actual = getLoadedTesseractVersion(absoluteTesseractPath);
+        final String bundled = getTesseractVersion();
+        final String actualMM = majorMinor(actual);
+        final String bundledMM = majorMinor(bundled);
+        if (actualMM == null || !actualMM.equals(bundledMM)) {
+            throw new IllegalStateException(
+                    "Legerix loaded the wrong Tesseract: expected " + bundled
+                            + " (bundled, MAJOR.MINOR " + bundledMM + ") but TessVersion() reports "
+                            + actual + " on " + absoluteTesseractPath
+                            + ". The extracted file may be corrupt or a different upstream MAJOR.MINOR than declared.");
         }
-        final Path p = dir.resolve(fileName);
-        try {
-            System.load(p.toAbsolutePath().toString());
-        } catch (final UnsatisfiedLinkError e) {
-            logger.log(Level.SEVERE, "Failed to load native library " + p, e);
-            throw e;
-        }
+    }
+
+    /** Extract MAJOR.MINOR from a version string. {@code "5.5.2"} → {@code "5.5"}. */
+    private static String majorMinor(final String v) {
+        if (v == null) return null;
+        final int firstDot = v.indexOf('.');
+        if (firstDot < 0) return v;
+        final int secondDot = v.indexOf('.', firstDot + 1);
+        return secondDot < 0 ? v : v.substring(0, secondDot);
     }
 }

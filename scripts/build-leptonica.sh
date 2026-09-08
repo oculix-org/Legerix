@@ -57,3 +57,15 @@ make install
 
 echo "==> Leptonica installed to $PREFIX"
 ls -lh "$PREFIX/lib/" | grep -E 'leptonica|lept' || true
+
+# See build-tesseract.sh for the libtool $ORIGIN corruption story.
+# Same treatment here, since leptonica ships alongside tesseract and its
+# own transitive codec deps (libjpeg, libpng, libtiff) sit next to it.
+if [ "$(uname -s)" != "Darwin" ] && command -v patchelf >/dev/null 2>&1; then
+    for so in "$PREFIX/lib/libleptonica.so."*; do
+        if [ -f "$so" ] && [ ! -L "$so" ]; then
+            patchelf --set-rpath '$ORIGIN' "$so"
+            echo "==> patchelf --set-rpath '\$ORIGIN' $so"
+        fi
+    done
+fi
