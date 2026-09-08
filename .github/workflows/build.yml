@@ -696,6 +696,22 @@ jobs:
       - name: Build and test
         run: mvn -B install
 
+      # Legerix#21, on the real path: the tests above run from target/classes,
+      # where the manifest is not even read. Take the jar just built, inject a
+      # foreign native under the tier the way a co-bundling consumer's fat
+      # jar carries one, and load from that copy with an empty cache. The
+      # cache must end up holding exactly the manifest. Gate for the release.
+      - name: JAR-mode extraction probe (Legerix#21)
+        run: |
+          JAR=$(ls target/legerix-*.jar | grep -v -- '-sources\|-javadoc' | head -1)
+          cp "$JAR" target/legerix-shaded-probe.jar
+          mkdir -p probe/linux-x86-64
+          echo "not ours" > probe/linux-x86-64/libopencv_fake.so
+          (cd probe && jar uf ../target/legerix-shaded-probe.jar linux-x86-64/libopencv_fake.so)
+          JNA=$(mvn -B -q dependency:build-classpath -DincludeArtifactIds=jna -Dmdep.outputFile=/dev/stdout)
+          rm -rf ~/.cache/legerix/$(mvn -B -q help:evaluate -Dexpression=project.version -DforceStdout)
+          java -cp "target/legerix-shaded-probe.jar:$JNA" scripts/JarModeProbe.java
+
       - uses: actions/upload-artifact@v4
         with:
           name: dist
