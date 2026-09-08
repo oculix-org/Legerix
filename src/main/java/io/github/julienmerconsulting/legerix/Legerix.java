@@ -417,7 +417,7 @@ public final class Legerix {
     // on upgrade 5.5.0-8 -> 5.5.0-9 the cache was keyed on the bare
     // "5.5.0" (getTesseractVersion() strips the build suffix), so
     // extractIfMissing early-returned and users kept the old natives.
-    private static final String DEV_CACHE_VERSION = "5.5.0-9-DO-NOT-USE";
+    private static final String DEV_CACHE_VERSION = "5.5.2-1";
 
     // Full Legerix Maven version (e.g. "5.5.0-3"), used as cache key so that
     // bumping only the Legerix build suffix invalidates stale extracted DLLs.
