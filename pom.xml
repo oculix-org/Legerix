@@ -221,11 +221,24 @@
 			<version>4.13.2</version>
 			<scope>test</scope>
 		</dependency>
+		<!-- The smoke tests exercise the shipped natives through Octachorix, the
+		     binding that consumes them by absolute path in production. tess4j is
+		     gone: it resolved "tesseract" by short name through JNA and could
+		     bind a system library while this suite stayed green (Legerix#20);
+		     loadNatives() now refuses to run with it on the classpath anyway.
+		     Octachorix's own jna is excluded so the test classpath carries the
+		     single jna version declared above. -->
 		<dependency>
-			<groupId>net.sourceforge.tess4j</groupId>
-			<artifactId>tess4j</artifactId>
-			<version>5.18.0</version>
+			<groupId>io.github.oculix-org</groupId>
+			<artifactId>octachorix</artifactId>
+			<version>1.0.0</version>
 			<scope>test</scope>
+			<exclusions>
+				<exclusion>
+					<groupId>net.java.dev.jna</groupId>
+					<artifactId>jna</artifactId>
+				</exclusion>
+			</exclusions>
 		</dependency>
 	</dependencies>
 </project>
