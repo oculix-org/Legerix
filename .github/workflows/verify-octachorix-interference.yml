@@ -327,6 +327,7 @@ jobs:
           : > src/main/resources/linux-aarch64/libtesseract.so.5
           : > src/main/resources/darwin/libtesseract.5.dylib
           : > src/main/resources/darwin-aarch64/libtesseract.5.dylib
+          : > src/main/resources/win32-x86-64/tesseract55.dll
           LEGERIX_TIERS=linux-x86-64 bash ./scripts/write-natives-manifest.sh src/main/resources
           bash ./scripts/fetch-traineddata.sh src/main/resources/tessdata
 
