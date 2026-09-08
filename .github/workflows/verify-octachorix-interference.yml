@@ -345,3 +345,54 @@ jobs:
           JNA=$(mvn -B -q dependency:build-classpath -DincludeArtifactIds=jna -Dmdep.outputFile=/dev/stdout)
           rm -rf ~/.cache/legerix/$(mvn -B -q help:evaluate -Dexpression=project.version -DforceStdout)
           java -cp "target/legerix-shaded-probe.jar:$JNA" scripts/JarModeProbe.java
+
+  # ----- macOS without Homebrew codecs: the message, not a dyld dump -------
+  # The darwin tiers are linked against Homebrew's image codecs by absolute
+  # path (documented prerequisite). On the Intel runner, remove those
+  # formulae, package a Legerix jar with the fresh darwin natives, and load:
+  # loadNatives() must fail with the "brew install ..." instruction in the
+  # UnsatisfiedLinkError. If it loads anyway the probe exits 3: the codecs
+  # were still reachable, so the message path was not exercised, and the job
+  # says so instead of passing on nothing.
+  mac_no_homebrew_probe:
+    needs: build_macos_x64
+    runs-on: macos-15-intel
+    name: macOS without Homebrew codecs (message probe)
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Stage the fresh darwin natives
+        uses: actions/download-artifact@v4
+        with:
+          name: fresh-darwin
+          path: src/main/resources/darwin
+
+      - name: Placeholders for the other tiers, manifest, traineddata
+        run: |
+          : > src/main/resources/linux-x86-64/libtesseract.so.5
+          : > src/main/resources/linux-aarch64/libtesseract.so.5
+          : > src/main/resources/darwin-aarch64/libtesseract.5.dylib
+          : > src/main/resources/win32-x86-64/tesseract55.dll
+          LEGERIX_TIERS=darwin bash ./scripts/write-natives-manifest.sh src/main/resources
+          bash ./scripts/fetch-traineddata.sh src/main/resources/tessdata
+
+      - name: Package
+        run: mvn -B -q package -DskipTests
+
+      - name: Remove the Homebrew codecs the darwin natives reference
+        run: |
+          otool -L src/main/resources/darwin/libleptonica.6.dylib
+          brew uninstall --ignore-dependencies --force jpeg-turbo libpng libtiff webp zstd xz libdeflate || true
+          ls /usr/local/opt/jpeg-turbo/lib 2>&1 || echo "jpeg-turbo gone, as intended"
+
+      - name: Load from the jar and expect the instruction
+        run: |
+          JAR=$(ls target/legerix-*.jar | grep -v -- '-sources\|-javadoc' | head -1)
+          JNA=$(mvn -B -q dependency:build-classpath -DincludeArtifactIds=jna -Dmdep.outputFile=/dev/stdout)
+          rm -rf ~/.cache/legerix/$(mvn -B -q help:evaluate -Dexpression=project.version -DforceStdout)
+          java -cp "$JAR:$JNA" scripts/MacNoHomebrewProbe.java
