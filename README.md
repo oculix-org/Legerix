@@ -27,19 +27,61 @@ upstream release resets the build to `1`.
 
 ## What's in the jar
 
-| Path                                  | Content                                |
-| ------------------------------------- | -------------------------------------- |
-| `linux-x86-64/`                       | glibc &ge; 2.38 build (Ubuntu 24.04)   |
-| `linux-x86-64-legacy/`                | glibc &ge; 2.28 build (manylinux_2_28) |
-| `linux-aarch64/`                      | glibc &ge; 2.38 build                  |
-| `linux-aarch64-legacy/`               | glibc &ge; 2.28 build                  |
-| `darwin/`                             | macOS x86\_64                          |
-| `darwin-aarch64/`                     | macOS Apple Silicon                    |
-| `win32-x86-64/`                       | Windows x86\_64 (vcpkg toolchain)      |
-| `tessdata/*.traineddata`              | 5 bundled fast models, ~12 MB total (see below) |
-| `io/github/julienmerconsulting/legerix/Legerix.class` | Java loader               |
+Everything Legerix ships lives under `META-INF/legerix/`, and nothing else in
+a jar belongs to Legerix.
 
-Each platform directory contains both `libtesseract` and `libleptonica`.
+| Path under `META-INF/legerix/`        | Content                                |
+| ------------------------------------- | -------------------------------------- |
+| `natives/linux-x86-64/`               | glibc &ge; 2.38 build (Ubuntu 24.04)   |
+| `natives/linux-x86-64-legacy/`        | glibc &ge; 2.28 build (manylinux_2_28) |
+| `natives/linux-aarch64/`              | glibc &ge; 2.38 build                  |
+| `natives/linux-aarch64-legacy/`       | glibc &ge; 2.28 build                  |
+| `natives/darwin/`                     | macOS x86\_64                          |
+| `natives/darwin-aarch64/`             | macOS Apple Silicon                    |
+| `natives/win32-x86-64/`               | Windows x86\_64 (vcpkg toolchain)      |
+| `natives/<tier>/legerix-natives.txt`  | what that tier ships, written at build time |
+| `tessdata/*.traineddata`              | 5 bundled fast models, ~12 MB total (see below) |
+| `legerix.properties`                  | Legerix's own version and native versions |
+
+Plus `io/github/julienmerconsulting/legerix/Legerix.class`, the Java loader.
+Each tier directory contains both `libtesseract` and `libleptonica`; Windows
+also carries the vcpkg DLLs they import.
+
+### Reserved namespace, single source, strict manifest
+
+A consumer is free to shade Legerix into a fat jar, and free to ship its own
+natives under whatever generic directory names it likes. Legerix reads none of
+them, and Legerix reads nothing through the class loader:
+
+* **its own space.** `META-INF/legerix/` is Legerix's and only Legerix's. A
+  consumer's OpenCV under `linux-x86-64/` is simply not Legerix's business
+  any more, and cannot end up in its cache (Legerix#21, measured by David
+  Young: 24 MB of foreign native on macOS, 67 MB on Linux).
+* **one source.** The container of `Legerix.class` is opened once and the
+  manifest, the natives and the language models are all read from it, entry by
+  entry. `getResourceAsStream()` is never used for the payload: another jar
+  earlier on the class path can expose the very same path and answer instead.
+* **a contract, not a hint.** No tier manifest, a declared file missing, the
+  tesseract/leptonica pair not declared, a name that is not a plain file name,
+  an entry twice: `loadNatives()` fails, before loading anything, saying which
+  file and which jar. There is no fallback to the old generic paths and no
+  reuse of an existing cache to make up for a broken payload.
+* **a private extraction per run.** Each `loadNatives()` extracts the whole
+  declared set into a fresh directory of its own under
+  `<cache>/<legerix version>/`, claimed by a lock file for the life of the
+  JVM. Two consumers of the same version never share one, and a directory is
+  never completed with files from another run. Directories no live JVM holds
+  are reaped by a later run, best effort: a native still mapped on Windows is
+  left for next time.
+* **its own identity.** The version comes from `legerix.properties` in the
+  payload, not from the jar manifest, which belongs to the consumer once
+  Legerix is shaded.
+
+What this does *not* claim: it is not authentication. Someone who deliberately
+replaces a binary inside `META-INF/legerix/` gets what they put there, and
+`assertBundledTesseract()` remains a version check, not a certificate of
+provenance. What it removes is collisions, ambiguous resolution and mixed
+extractions.
 
 ### macOS prerequisite: Homebrew
 
@@ -76,8 +118,11 @@ Path tessdataDir  = Legerix.getTessdataPath();
 // Detected runtime tier on Linux: "modern", "legacy" or "n/a" off-Linux.
 String tier       = Legerix.getGlibcTier();
 
-// Tesseract upstream version embedded in this jar (e.g. "5.5.2").
+// Tesseract upstream version of this payload (e.g. "5.5.2"), and Legerix's
+// own full version (e.g. "5.5.2-1"). Both read from Legerix's own payload,
+// never from the jar manifest, which is the consumer's after shading.
 String tessVer    = Legerix.getTesseractVersion();
+String legerixVer = Legerix.getLegerixVersion();
 ```
 
 ### Typical wiring: Octachorix, by absolute path
