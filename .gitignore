@@ -30,3 +30,6 @@ src/main/resources/darwin/*.dylib
 src/main/resources/darwin-aarch64/*.dylib
 src/main/resources/win32-x86-64/*.dll
 src/main/resources/tessdata/*.traineddata
+
+# Per-tier natives manifest, written by scripts/write-natives-manifest.sh at build time.
+src/main/resources/*/legerix-natives.txt
