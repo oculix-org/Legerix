@@ -741,8 +741,47 @@ public final class Legerix {
             opts.put(Library.OPTION_OPEN_FLAGS, RTLD_LAZY_LINUX | RTLD_GLOBAL_LINUX);
             NativeLibrary.getInstance(absolutePath, opts);
         } else {
-            System.load(absolutePath);
+            try {
+                System.load(absolutePath);
+            } catch (final UnsatisfiedLinkError e) {
+                final String advice = os == OS.OSX ? macOsHomebrewAdvice(e.getMessage()) : null;
+                if (advice == null) {
+                    throw e;
+                }
+                final UnsatisfiedLinkError explained = new UnsatisfiedLinkError(advice + "\nOriginal dyld error: " + e.getMessage());
+                explained.initCause(e);
+                throw explained;
+            }
         }
+    }
+
+    /** Homebrew formulae the macOS tiers' Leptonica and Tesseract are linked against. */
+    static final String MACOS_HOMEBREW_FORMULAE = "jpeg-turbo libpng libtiff webp zstd xz libdeflate";
+
+    /**
+     * On macOS the bundled Leptonica references its image codecs by the
+     * absolute Homebrew paths they were linked against, {@code /opt/homebrew}
+     * on Apple Silicon and {@code /usr/local} on Intel. On a Mac without those
+     * formulae dyld reports {@code Library not loaded: <that path>} and the
+     * raw text tells the user nothing about what to do. This turns that
+     * failure into an instruction. Returns {@code null} for any other error,
+     * which is then rethrown untouched.
+     */
+    static String macOsHomebrewAdvice(final String dyldMessage) {
+        if (dyldMessage == null) {
+            return null;
+        }
+        final boolean homebrewPath = dyldMessage.contains("/opt/homebrew/") || dyldMessage.contains("/usr/local/opt/")
+                || dyldMessage.contains("/usr/local/lib/");
+        final boolean notLoaded = dyldMessage.contains("Library not loaded") || dyldMessage.contains("image not found")
+                || dyldMessage.contains("no such file");
+        if (!homebrewPath || !notLoaded) {
+            return null;
+        }
+        return "Legerix on macOS needs Homebrew's image codecs, which this Mac does not have. "
+                + "Install Homebrew (https://brew.sh) and run:\n"
+                + "    brew install " + MACOS_HOMEBREW_FORMULAE + "\n"
+                + "then start again. The bundled Tesseract and Leptonica are linked against these formulae.";
     }
 
     // Minimal JNA binding to Win32 SetDllDirectoryW. Only loaded/initialized
