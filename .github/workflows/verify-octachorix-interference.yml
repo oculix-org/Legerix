@@ -4,8 +4,8 @@ name: Octachorix theorem (#20) — fresh natives, Linux modern + legacy + macOS 
 # build.yml does (the build jobs below are build.yml's, copied verbatim,
 # without the release), then runs Octachorix's test suite against the files
 # just produced, with a system Tesseract installed NEXT to them: apt on
-# Linux, brew on macOS. The library actually bound must be ours (5.5.0),
-# never the neighbour's. Nothing is downloaded from a release and nothing
+# Linux, brew on macOS. The library actually bound must be ours (the
+# Tesseract version the pom declares, 5.5.2), never the neighbour's. Nothing is downloaded from a release and nothing
 # is published: this run tests what THIS commit builds, not what the last
 # release shipped.
 
@@ -286,7 +286,7 @@ jobs:
           -DargLine="-Doctachorix.test.libs.tesseract=${{ github.workspace }}/natives/${{ matrix.tesseract }}
           -Doctachorix.test.libs.leptonica=${{ github.workspace }}/natives/${{ matrix.leptonica }}
           -Doctachorix.test.libs.tessdata=${{ github.workspace }}/tessdata
-          -Doctachorix.test.expectedVersion=5.5.0"
+          -Doctachorix.test.expectedVersion=5.5.2"
 
       - uses: actions/upload-artifact@v4
         if: failure()
