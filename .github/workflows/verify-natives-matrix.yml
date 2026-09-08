@@ -5,18 +5,18 @@ name: Verify natives cross-platform matrix (#20 RC6)
 # Per the prediction above, a CI-only check without one will pass while users fail."
 #
 # 5 combos matrix (OS × system-Tesseract), chacun stage les natives de la
-# pre-release v5.5.0-9-DO-NOT-USE et run LegerixSmokeTest — incluant
-# loadedTesseractIsBundledNotSystem qui valide l'assertion path-identity
-# du fix (Legerix.java:517 sur cette branche).
+# release qui porte la version du pom et run LegerixSmokeTest — dont
+# loadedTesseractIsBundledNotSystem, qui valide l'identité par chemin.
+#
+# Le tag vient du pom, jamais écrit en dur : une URL figée ferait tester
+# indéfiniment le payload d'une vieille pre-release pendant que le code, lui,
+# avance. Pas de liste blanche de branches sous push non plus : un filtre qui
+# nomme une branche rend le workflow muet le jour où elle est mergée ou
+# renommée (cf. Oculix#465).
 
 on:
   workflow_dispatch:
-  # GitHub ne connaît un workflow via workflow_dispatch que s'il est sur la
-  # branche default. En attendant le merge sur master, on ajoute un trigger
-  # push sur cette branche pour permettre l'auto-run au prochain commit.
   push:
-    branches:
-      - fix/20-runpath-and-verify
 
 jobs:
   verify:
@@ -56,7 +56,11 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      # ── Stage natives from pre-release ─────────────────────────────
+      - name: Resolve the release tag from the pom version
+        shell: bash
+        run: echo "RELEASE_TAG=v$(mvn -B -q help:evaluate -Dexpression=project.version -DforceStdout)" >> $GITHUB_ENV
+
+      # ── Stage natives from the release that matches the pom ────────
       - name: Stage Linux natives from release
         if: matrix.resource_dir == 'linux-x86-64'
         shell: bash
@@ -64,9 +68,9 @@ jobs:
           mkdir -p src/main/resources/META-INF/legerix/natives/linux-x86-64
           cd src/main/resources/META-INF/legerix/natives/linux-x86-64
           curl -sSL -o libtesseract.so.5 \
-            https://github.com/oculix-org/Legerix/releases/download/v5.5.0-9-DO-NOT-USE/libtesseract.so.5-linux-x86-64
+            https://github.com/oculix-org/Legerix/releases/download/${RELEASE_TAG}/libtesseract.so.5-linux-x86-64
           curl -sSL -o libleptonica.so.6 \
-            https://github.com/oculix-org/Legerix/releases/download/v5.5.0-9-DO-NOT-USE/libleptonica.so.6-linux-x86-64
+            https://github.com/oculix-org/Legerix/releases/download/${RELEASE_TAG}/libleptonica.so.6-linux-x86-64
           ls -la
 
       - name: Stage macOS aarch64 natives from release
@@ -76,9 +80,9 @@ jobs:
           mkdir -p src/main/resources/META-INF/legerix/natives/darwin-aarch64
           cd src/main/resources/META-INF/legerix/natives/darwin-aarch64
           curl -sSL -o libtesseract.5.dylib \
-            https://github.com/oculix-org/Legerix/releases/download/v5.5.0-9-DO-NOT-USE/libtesseract.5-darwin-aarch64.dylib
+            https://github.com/oculix-org/Legerix/releases/download/${RELEASE_TAG}/libtesseract.5-darwin-aarch64.dylib
           curl -sSL -o libleptonica.6.dylib \
-            https://github.com/oculix-org/Legerix/releases/download/v5.5.0-9-DO-NOT-USE/libleptonica.6-darwin-aarch64.dylib
+            https://github.com/oculix-org/Legerix/releases/download/${RELEASE_TAG}/libleptonica.6-darwin-aarch64.dylib
           # Unversioned symlinks (load-bearing per commit 00bad35)
           ln -sf libtesseract.5.dylib libtesseract.dylib
           ln -sf libleptonica.6.dylib libleptonica.dylib
@@ -90,7 +94,7 @@ jobs:
         run: |
           mkdir -p src/main/resources/META-INF/legerix/natives/win32-x86-64
           curl -sSL -o legerix-win-x86-64.zip \
-            https://github.com/oculix-org/Legerix/releases/download/v5.5.0-9-DO-NOT-USE/legerix-win-x86-64.zip
+            https://github.com/oculix-org/Legerix/releases/download/${RELEASE_TAG}/legerix-win-x86-64.zip
           unzip -o legerix-win-x86-64.zip -d src/main/resources/META-INF/legerix/natives/win32-x86-64/
           ls -la src/main/resources/META-INF/legerix/natives/win32-x86-64/
 
