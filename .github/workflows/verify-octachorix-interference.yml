@@ -4,16 +4,20 @@ name: Octachorix theorem (#20) — fresh natives, Linux modern + legacy + macOS 
 # build.yml does (the build jobs below are build.yml's, copied verbatim,
 # without the release), then runs Octachorix's test suite against the files
 # just produced, with a system Tesseract installed NEXT to them: apt on
-# Linux, brew on macOS. The library actually bound must be ours (the
-# Tesseract version the pom declares, 5.5.2), never the neighbour's. Nothing is downloaded from a release and nothing
-# is published: this run tests what THIS commit builds, not what the last
-# release shipped.
+# Linux, brew on macOS. The library actually bound must be ours, the Tesseract
+# version the pom declares, never the neighbour's. Nothing is downloaded from a
+# release and nothing is published: this run tests what THIS commit builds, not
+# what the last release shipped. It also runs the payload probes of #21 on the
+# jar it packages.
+#
+# No branch allowlist under push, on purpose: a filter naming one branch is how
+# a workflow goes quiet the day that branch is merged or renamed, which is the
+# defect David Young found on the OculiX side (Oculix#465). Every push is
+# checked, whatever the branch.
 
 on:
   workflow_dispatch:
   push:
-    branches:
-      - fix/20-runpath-and-verify
 
 jobs:
   # ----- Linux x86_64 modern (Ubuntu 24.04, glibc >= 2.38) ------------------
@@ -254,6 +258,13 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
+      # The version the theorem asserts comes from the pom, like the one the
+      # build jobs compile. Hardcoding it here would make the next bump either
+      # fail this job or, worse, assert a version nothing ships any more.
+      - name: Get Version Info
+        run: |
+          echo "TESSERACT_VERSION=$(mvn build-helper:parse-version org.apache.maven.plugins:maven-help-plugin:3.2.0:evaluate -Dexpression=tesseract.version.long -q -DforceStdout)" >> $GITHUB_ENV
+
       - name: Natives built by this run (${{ matrix.artifact }})
         uses: actions/download-artifact@v4
         with:
@@ -286,7 +297,7 @@ jobs:
           -DargLine="-Doctachorix.test.libs.tesseract=${{ github.workspace }}/natives/${{ matrix.tesseract }}
           -Doctachorix.test.libs.leptonica=${{ github.workspace }}/natives/${{ matrix.leptonica }}
           -Doctachorix.test.libs.tessdata=${{ github.workspace }}/tessdata
-          -Doctachorix.test.expectedVersion=5.5.2"
+          -Doctachorix.test.expectedVersion=${{ env.TESSERACT_VERSION }}"
 
       - uses: actions/upload-artifact@v4
         if: failure()
