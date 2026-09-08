@@ -103,8 +103,8 @@ jobs:
                 curl tar gzip make gcc gcc-c++
               bash ./scripts/build-self-contained-local.sh
               mkdir -p out
-              cp -L src/main/resources/linux-x86-64-legacy/libleptonica.so.6 out/
-              cp -L src/main/resources/linux-x86-64-legacy/libtesseract.so.5 out/
+              cp -L src/main/resources/META-INF/legerix/natives/linux-x86-64-legacy/libleptonica.so.6 out/
+              cp -L src/main/resources/META-INF/legerix/natives/linux-x86-64-legacy/libtesseract.so.5 out/
               echo "=== NEEDED of libtesseract.so.5 (no codec expected) ==="
               readelf -d out/libtesseract.so.5 | grep NEEDED || true
               if readelf -d out/libtesseract.so.5 out/libleptonica.so.6 | grep -qE "NEEDED.*(libjpeg|libpng|libtiff|libwebp|libzstd|liblzma|libdeflate)"; then
@@ -320,31 +320,22 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: fresh-linux-x86-64
-          path: src/main/resources/linux-x86-64
+          path: src/main/resources/META-INF/legerix/natives/linux-x86-64
 
       - name: Placeholders for the tiers the bundle plugin requires, manifest, traineddata
         run: |
-          : > src/main/resources/linux-aarch64/libtesseract.so.5
-          : > src/main/resources/darwin/libtesseract.5.dylib
-          : > src/main/resources/darwin-aarch64/libtesseract.5.dylib
-          : > src/main/resources/win32-x86-64/tesseract55.dll
-          LEGERIX_TIERS=linux-x86-64 bash ./scripts/write-natives-manifest.sh src/main/resources
-          bash ./scripts/fetch-traineddata.sh src/main/resources/tessdata
+          : > src/main/resources/META-INF/legerix/natives/linux-aarch64/libtesseract.so.5
+          : > src/main/resources/META-INF/legerix/natives/darwin/libtesseract.5.dylib
+          : > src/main/resources/META-INF/legerix/natives/darwin-aarch64/libtesseract.5.dylib
+          : > src/main/resources/META-INF/legerix/natives/win32-x86-64/tesseract55.dll
+          LEGERIX_TIERS=linux-x86-64 bash ./scripts/write-natives-manifest.sh src/main/resources/META-INF/legerix/natives
+          bash ./scripts/fetch-traineddata.sh src/main/resources/META-INF/legerix/tessdata
 
       - name: Package
         run: mvn -B -q package -DskipTests
 
-      - name: Inject a foreign native and probe from the shaded copy
-        run: |
-          JAR=$(ls target/legerix-*.jar | grep -v -- '-sources\|-javadoc' | head -1)
-          cp "$JAR" target/legerix-shaded-probe.jar
-          mkdir -p probe/linux-x86-64
-          echo "not ours" > probe/linux-x86-64/libopencv_fake.so
-          (cd probe && jar uf ../target/legerix-shaded-probe.jar linux-x86-64/libopencv_fake.so)
-          unzip -l target/legerix-shaded-probe.jar | grep 'linux-x86-64/'
-          JNA=$(mvn -B -q dependency:build-classpath -DincludeArtifactIds=jna -Dmdep.outputFile=/dev/stdout)
-          rm -rf ~/.cache/legerix/$(mvn -B -q help:evaluate -Dexpression=project.version -DforceStdout)
-          java -cp "target/legerix-shaded-probe.jar:$JNA" scripts/JarModeProbe.java
+      - name: JAR-mode probes (Legerix#21)
+        run: bash ./scripts/run-payload-probes.sh
 
   # ----- macOS without Homebrew codecs: the message, not a dyld dump -------
   # The darwin tiers are linked against Homebrew's image codecs by absolute
@@ -370,23 +361,23 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: fresh-darwin
-          path: src/main/resources/darwin
+          path: src/main/resources/META-INF/legerix/natives/darwin
 
       - name: Placeholders for the other tiers, manifest, traineddata
         run: |
-          : > src/main/resources/linux-x86-64/libtesseract.so.5
-          : > src/main/resources/linux-aarch64/libtesseract.so.5
-          : > src/main/resources/darwin-aarch64/libtesseract.5.dylib
-          : > src/main/resources/win32-x86-64/tesseract55.dll
-          LEGERIX_TIERS=darwin bash ./scripts/write-natives-manifest.sh src/main/resources
-          bash ./scripts/fetch-traineddata.sh src/main/resources/tessdata
+          : > src/main/resources/META-INF/legerix/natives/linux-x86-64/libtesseract.so.5
+          : > src/main/resources/META-INF/legerix/natives/linux-aarch64/libtesseract.so.5
+          : > src/main/resources/META-INF/legerix/natives/darwin-aarch64/libtesseract.5.dylib
+          : > src/main/resources/META-INF/legerix/natives/win32-x86-64/tesseract55.dll
+          LEGERIX_TIERS=darwin bash ./scripts/write-natives-manifest.sh src/main/resources/META-INF/legerix/natives
+          bash ./scripts/fetch-traineddata.sh src/main/resources/META-INF/legerix/tessdata
 
       - name: Package
         run: mvn -B -q package -DskipTests
 
       - name: Remove the Homebrew codecs the darwin natives reference
         run: |
-          otool -L src/main/resources/darwin/libleptonica.6.dylib
+          otool -L src/main/resources/META-INF/legerix/natives/darwin/libleptonica.6.dylib
           brew uninstall --ignore-dependencies --force jpeg-turbo libpng libtiff webp zstd xz libdeflate || true
           ls /usr/local/opt/jpeg-turbo/lib 2>&1 || echo "jpeg-turbo gone, as intended"
 
