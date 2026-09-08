@@ -12,7 +12,7 @@
 # Usage: bash ./scripts/write-natives-manifest.sh [resources-dir]
 set -euo pipefail
 
-RESOURCES="${1:-src/main/resources}"
+RESOURCES="${1:-src/main/resources/META-INF/legerix/natives}"
 MANIFEST="legerix-natives.txt"
 # LEGERIX_TIERS narrows the run to the tiers actually staged (a local probe
 # on one platform); the release builds stage all seven.
@@ -36,6 +36,14 @@ for tier in $TIERS; do
   echo "$tier: $count file(s)"
   sed 's/^/    /' "$dir/$MANIFEST"
   if [ "$count" -eq 0 ]; then
+    # A release stages all seven tiers, so an empty one means staging failed
+    # and the jar would ship a platform that cannot load. A per-platform job
+    # stages only its own tier and sets LEGERIX_ALLOW_EMPTY_TIERS=1.
+    rm -f "$dir/$MANIFEST"
+    if [ "${LEGERIX_ALLOW_EMPTY_TIERS:-0}" = "1" ]; then
+      echo "    (empty, not staged on this runner — no manifest written)"
+      continue
+    fi
     echo "ERROR: $dir holds no native file — staging failed before this step"
     exit 1
   fi
