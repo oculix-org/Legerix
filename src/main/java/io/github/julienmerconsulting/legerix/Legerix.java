@@ -215,30 +215,47 @@ public final class Legerix {
                     tessdataDir.resolve(lang + ".traineddata"));
         }
 
-        // Best-effort help for consumers that resolve tesseract/leptonica by
-        // short name via tess4j. Two mechanisms, both non-authoritative:
+        // Best-effort hints for a consumer that would still resolve
+        // tesseract/leptonica by SHORT NAME through JNA. The supported
+        // contract is not this: it is getTesseractLibraryPath() and
+        // getLeptonicaLibraryPath(), absolute paths, which Octachorix binds
+        // without any lookup. tess4j, the short-name consumer these hints
+        // were written for, is refused above. They stay for any other code
+        // calling Native.load("tesseract", ...), and they are hints only.
         //
-        //   1. addSearchPath. David Young measured (Legerix#20) that JNA's
-        //      matchLibrary pools candidates across ALL search directories and
-        //      picks the highest-parsed-version, so a system libtesseract.so.5.0.3
-        //      always beats our libtesseract.so.5 no matter which directory is
-        //      first. Setting these is at best neutral, at worst a false hint —
-        //      kept because unversioned macOS symlinks (build.yml 00bad35) DO
-        //      let the exact-name pass resolve here in search order.
+        // How JNA 5.14.0 really resolves a short name, as measured and
+        // corrected by David Young on Legerix#20 (§3 of his report of
+        // 2026-09-04), replacing the mechanism this comment used to cite:
         //
-        //   2. jna.library.path preseed. tess4j rewrites this property at its
-        //      own static init (its LoadLibs class prepends %TEMP%\tess4j\ and,
-        //      on macOS, /opt/homebrew/lib). We prepend our directory before
-        //      that happens so at least it is present in the merged path.
-        //      Not a hard guarantee — tess4j's prepend order is undocumented.
+        //   1. Two exact-name attempts first: "libtesseract.so" (unversioned)
+        //      in each search directory, jna.library.path included. If the
+        //      file exists and dlopen succeeds, resolution ends there and no
+        //      ranking ever happens. Directory order was never the problem:
+        //      tess4j APPENDS to jna.library.path, ours stays first.
         //
-        // NEITHER mechanism protects Legerix.loadNatives() itself: the
+        //   2. Only if both exact-name attempts fail, matchLibrary() runs as a
+        //      catch-block fallback. Its filter ANDs isVersionedName(), so an
+        //      unversioned file is not in its pool at all, and among the
+        //      versioned candidates of ALL directories the highest parsed
+        //      version wins: a system libtesseract.so.5.0.3 beats our
+        //      libtesseract.so.5 whatever directory comes first.
+        //
+        // Our August reading, "an unversioned .so loses because no-version
+        // parses lowest", was wrong: it never competes, it is excluded. What
+        // actually failed in August was step 1 itself: the exact-name attempt
+        // FOUND the unversioned symlink of the -8 payload and dlopen failed,
+        // because that payload's RUNPATH was the corrupted literal 'RIGIN' and
+        // the sibling leptonica was unreachable. A load failure read as a
+        // ranking loss. With the $ORIGIN RUNPATH fixed, an unversioned alias
+        // present in the extraction directory does resolve at step 1; when it
+        // is absent, which depends on the publish channel, step 2 hands the
+        // consumer the system library. Hence the getters above: name the
+        // file, do not look it up.
+        //
+        // NEITHER mechanism affects Legerix.loadNatives() itself: the
         // System.load() calls below use absolute paths and bypass all short-
-        // name resolution. And assertBundledTesseract() below uses
-        // NativeLibrary.getInstance(absolute) for the same reason. These two
-        // hints only affect what happens when a *consumer* (e.g. tess4j via
-        // TessAPI, or any code calling Native.load("tesseract", ...)) tries
-        // short-name resolution later — a race Legerix cannot fully control.
+        // name resolution, and assertBundledTesseract() below uses
+        // NativeLibrary.getInstance(absolute) for the same reason.
         final String ours = target.toAbsolutePath().toString();
         NativeLibrary.addSearchPath("tesseract", ours);
         NativeLibrary.addSearchPath("leptonica", ours);
