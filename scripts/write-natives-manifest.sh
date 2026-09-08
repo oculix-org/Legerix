@@ -14,7 +14,9 @@ set -euo pipefail
 
 RESOURCES="${1:-src/main/resources}"
 MANIFEST="legerix-natives.txt"
-TIERS="linux-x86-64 linux-x86-64-legacy linux-aarch64 linux-aarch64-legacy darwin darwin-aarch64 win32-x86-64"
+# LEGERIX_TIERS narrows the run to the tiers actually staged (a local probe
+# on one platform); the release builds stage all seven.
+TIERS="${LEGERIX_TIERS:-linux-x86-64 linux-x86-64-legacy linux-aarch64 linux-aarch64-legacy darwin darwin-aarch64 win32-x86-64}"
 
 for tier in $TIERS; do
   dir="$RESOURCES/$tier"
@@ -27,7 +29,8 @@ for tier in $TIERS; do
   # Written through a temp file: a redirection would create the manifest
   # before find runs, and the manifest would list itself.
   tmp="$(mktemp)"
-  find "$dir" -mindepth 1 -maxdepth 1 -type f ! -name "$MANIFEST" -printf '%f\n' | LC_ALL=C sort > "$tmp"
+  # Hidden files (.gitkeep) are repository plumbing, not natives.
+  find "$dir" -mindepth 1 -maxdepth 1 -type f ! -name "$MANIFEST" ! -name '.*' -printf '%f\n' | LC_ALL=C sort > "$tmp"
   mv "$tmp" "$dir/$MANIFEST"
   count=$(wc -l < "$dir/$MANIFEST" | tr -d ' ')
   echo "$tier: $count file(s)"
