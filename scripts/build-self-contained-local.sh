@@ -15,9 +15,9 @@
 #   mvn install
 #
 # Output:
-#   src/main/resources/<your-tier>/libleptonica.so.6 + libtesseract.so.5
+#   src/main/resources/META-INF/legerix/natives/<your-tier>/libleptonica.so.6 + libtesseract.so.5
 #     -- self-contained, statically linked against all codec deps
-#   src/main/resources/<other 6 tiers>/  -- 1-byte placeholders so
+#   src/main/resources/META-INF/legerix/natives/<other 6 tiers>/  -- 1-byte placeholders so
 #     maven-bundle-plugin Bundle-NativeCode validation passes
 #
 # `mvn install` then installs the jar as 5.5.0-5 in your local ~/.m2,
@@ -45,6 +45,8 @@ XZ_VERSION="${XZ_VERSION:-5.6.2}"
 LIBDEFLATE_VERSION="${LIBDEFLATE_VERSION:-1.20}"
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# Legerix owns META-INF/legerix/ in the jar and nothing else (Legerix#21).
+NATIVES_ROOT="$REPO_ROOT/src/main/resources/META-INF/legerix/natives"
 STATIC_PREFIX="${LEGERIX_STATIC_PREFIX:-/tmp/legerix-static-build}"
 FINAL_PREFIX="${STATIC_PREFIX}-final"
 JOBS="${JOBS:-$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)}"
@@ -241,22 +243,22 @@ build_libtiff
 build_leptonica
 build_tesseract
 
-# ---- Stage into src/main/resources ----
+# ---- Stage into Legerix's own resource space ----
 echo ""
-echo "==> Staging self-contained natives into src/main/resources/$TIER/"
-mkdir -p "$REPO_ROOT/src/main/resources/$TIER"
+echo "==> Staging self-contained natives into $NATIVES_ROOT/$TIER/"
+mkdir -p "$NATIVES_ROOT/$TIER"
 
 case "$(uname -s)" in
     Darwin)
-        cp -L "$FINAL_PREFIX/lib/libtesseract.5.dylib" "$REPO_ROOT/src/main/resources/$TIER/"
-        cp -L "$FINAL_PREFIX/lib/libleptonica.6.dylib" "$REPO_ROOT/src/main/resources/$TIER/"
+        cp -L "$FINAL_PREFIX/lib/libtesseract.5.dylib" "$NATIVES_ROOT/$TIER/"
+        cp -L "$FINAL_PREFIX/lib/libleptonica.6.dylib" "$NATIVES_ROOT/$TIER/"
         # Re-point @rpath references so loader_path resolution works.
-        install_name_tool -id "@rpath/libtesseract.5.dylib" "$REPO_ROOT/src/main/resources/$TIER/libtesseract.5.dylib" 2>/dev/null || true
-        install_name_tool -id "@rpath/libleptonica.6.dylib" "$REPO_ROOT/src/main/resources/$TIER/libleptonica.6.dylib" 2>/dev/null || true
+        install_name_tool -id "@rpath/libtesseract.5.dylib" "$NATIVES_ROOT/$TIER/libtesseract.5.dylib" 2>/dev/null || true
+        install_name_tool -id "@rpath/libleptonica.6.dylib" "$NATIVES_ROOT/$TIER/libleptonica.6.dylib" 2>/dev/null || true
         ;;
     *)
-        cp -L "$FINAL_PREFIX/lib/libtesseract.so.5" "$REPO_ROOT/src/main/resources/$TIER/"
-        cp -L "$FINAL_PREFIX/lib/libleptonica.so.6" "$REPO_ROOT/src/main/resources/$TIER/"
+        cp -L "$FINAL_PREFIX/lib/libtesseract.so.5" "$NATIVES_ROOT/$TIER/"
+        cp -L "$FINAL_PREFIX/lib/libleptonica.so.6" "$NATIVES_ROOT/$TIER/"
 
         # See scripts/build-tesseract.sh for the full libtool $ORIGIN corruption
         # story. David Young measured (Legerix#20) that the corrupted RUNPATH
@@ -265,8 +267,8 @@ case "$(uname -s)" in
         # not just build.yml. Post-fix with patchelf so a local build is as
         # relocatable as a CI build.
         if command -v patchelf >/dev/null 2>&1; then
-            patchelf --set-rpath '$ORIGIN' "$REPO_ROOT/src/main/resources/$TIER/libtesseract.so.5"
-            patchelf --set-rpath '$ORIGIN' "$REPO_ROOT/src/main/resources/$TIER/libleptonica.so.6"
+            patchelf --set-rpath '$ORIGIN' "$NATIVES_ROOT/$TIER/libtesseract.so.5"
+            patchelf --set-rpath '$ORIGIN' "$NATIVES_ROOT/$TIER/libleptonica.so.6"
             echo "==> patchelf --set-rpath '\$ORIGIN' applied to both .so"
         else
             echo "WARNING: patchelf not installed. The produced .so still carry the CI"
@@ -278,14 +280,14 @@ case "$(uname -s)" in
 esac
 
 # Strip to shrink the jar.
-strip "$REPO_ROOT/src/main/resources/$TIER/libtesseract."* 2>/dev/null || true
-strip "$REPO_ROOT/src/main/resources/$TIER/libleptonica."* 2>/dev/null || true
+strip "$NATIVES_ROOT/$TIER/libtesseract."* 2>/dev/null || true
+strip "$NATIVES_ROOT/$TIER/libleptonica."* 2>/dev/null || true
 
 # Verify: on Linux, confirm libtesseract.so.5 has no DT_NEEDED on codec libs.
 if [ "$(uname -s)" = "Linux" ]; then
     echo ""
     echo "==> Verifying libtesseract.so.5 has no DT_NEEDED on libjpeg/libpng/libtiff/libwebp/libzstd/liblzma"
-    NEEDED="$(readelf -d "$REPO_ROOT/src/main/resources/$TIER/libtesseract.so.5" | grep NEEDED || true)"
+    NEEDED="$(readelf -d "$NATIVES_ROOT/$TIER/libtesseract.so.5" | grep NEEDED || true)"
     echo "$NEEDED"
     if echo "$NEEDED" | grep -qE 'libjpeg|libpng|libtiff|libwebp|libzstd|liblzma|libdeflate'; then
         echo ""
@@ -300,13 +302,13 @@ fi
 ALL_TIERS=(linux-x86-64 linux-x86-64-legacy linux-aarch64 linux-aarch64-legacy darwin darwin-aarch64 win32-x86-64)
 for t in "${ALL_TIERS[@]}"; do
     [ "$t" = "$TIER" ] && continue
-    mkdir -p "$REPO_ROOT/src/main/resources/$t"
+    mkdir -p "$NATIVES_ROOT/$t"
     case "$t" in
-        linux*)       printf 'x' > "$REPO_ROOT/src/main/resources/$t/libtesseract.so.5"
-                       printf 'x' > "$REPO_ROOT/src/main/resources/$t/libleptonica.so.6" ;;
-        darwin*)      printf 'x' > "$REPO_ROOT/src/main/resources/$t/libtesseract.5.dylib"
-                       printf 'x' > "$REPO_ROOT/src/main/resources/$t/libleptonica.6.dylib" ;;
-        win32-x86-64) printf 'x' > "$REPO_ROOT/src/main/resources/$t/tesseract55.dll" ;;
+        linux*)       printf 'x' > "$NATIVES_ROOT/$t/libtesseract.so.5"
+                       printf 'x' > "$NATIVES_ROOT/$t/libleptonica.so.6" ;;
+        darwin*)      printf 'x' > "$NATIVES_ROOT/$t/libtesseract.5.dylib"
+                       printf 'x' > "$NATIVES_ROOT/$t/libleptonica.6.dylib" ;;
+        win32-x86-64) printf 'x' > "$NATIVES_ROOT/$t/tesseract55.dll" ;;
     esac
 done
 
@@ -314,7 +316,7 @@ done
 # Defuse Windows CRLF on the existing script (the repo was likely cloned with
 # autocrlf=true and WSL bash chokes on \r\n line endings).
 sed -i 's/\r$//' "$REPO_ROOT/scripts/fetch-traineddata.sh"
-bash "$REPO_ROOT/scripts/fetch-traineddata.sh" "$REPO_ROOT/src/main/resources/tessdata"
+bash "$REPO_ROOT/scripts/fetch-traineddata.sh" "$REPO_ROOT/src/main/resources/META-INF/legerix/tessdata"
 
 echo ""
 echo "================================================================"
