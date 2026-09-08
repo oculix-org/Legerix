@@ -101,6 +101,29 @@
 	</developers>
 
 	<build>
+		<!-- Legerix's payload lives under META-INF/legerix/ and nowhere else:
+		     natives per tier, tessdata, and legerix.properties. A consumer
+		     that shades Legerix keeps its own natives under the generic
+		     directory names it chooses, and the two no longer collide
+		     (Legerix#21). Only legerix.properties is filtered — filtering a
+		     .so, a .dylib, a .dll or a .traineddata would corrupt it. -->
+		<resources>
+			<resource>
+				<directory>src/main/resources</directory>
+				<filtering>false</filtering>
+				<excludes>
+					<exclude>META-INF/legerix/legerix.properties</exclude>
+				</excludes>
+			</resource>
+			<resource>
+				<directory>src/main/resources</directory>
+				<filtering>true</filtering>
+				<includes>
+					<include>META-INF/legerix/legerix.properties</include>
+				</includes>
+			</resource>
+		</resources>
+
 		<pluginManagement>
 			<plugins>
 				<!-- Pin core plugins to Maven 3.x-compatible versions so the
@@ -150,11 +173,11 @@
 						<Import-Package>!sun.reflect.*,*</Import-Package>
 						<Implementation-Version>${project.version}</Implementation-Version>
 						<Bundle-NativeCode>
-							linux-x86-64/libtesseract.so.5; osname=linux; processor=x86-64,
-							linux-aarch64/libtesseract.so.5; osname=linux; processor=aarch64,
-							darwin/libtesseract.5.dylib; osname=macosx; processor=x86-64,
-							darwin-aarch64/libtesseract.5.dylib; osname=macosx; processor=aarch64,
-							win32-x86-64/tesseract55.dll; osname=win32; processor=x86-64
+							META-INF/legerix/natives/linux-x86-64/libtesseract.so.5; osname=linux; processor=x86-64,
+							META-INF/legerix/natives/linux-aarch64/libtesseract.so.5; osname=linux; processor=aarch64,
+							META-INF/legerix/natives/darwin/libtesseract.5.dylib; osname=macosx; processor=x86-64,
+							META-INF/legerix/natives/darwin-aarch64/libtesseract.5.dylib; osname=macosx; processor=aarch64,
+							META-INF/legerix/natives/win32-x86-64/tesseract55.dll; osname=win32; processor=x86-64
 						</Bundle-NativeCode>
 					</instructions>
 				</configuration>
