@@ -41,6 +41,22 @@ upstream release resets the build to `1`.
 
 Each platform directory contains both `libtesseract` and `libleptonica`.
 
+### macOS prerequisite: Homebrew
+
+On both macOS tiers the bundled Leptonica is linked against Homebrew's image
+codecs and references them by their Homebrew path (`/opt/homebrew` on Apple
+Silicon, `/usr/local` on Intel). A Mac without those formulae cannot load the
+natives. Install Homebrew (https://brew.sh) and:
+
+```
+brew install jpeg-turbo libpng libtiff webp zstd xz libdeflate
+```
+
+If they are missing, `Legerix.loadNatives()` fails with an
+`UnsatisfiedLinkError` whose message says exactly this, with the `brew install`
+line to run, before the raw dyld text. Linux and Windows need nothing: their
+tiers carry or link their codecs themselves.
+
 ## Public API
 
 ```java
@@ -49,25 +65,37 @@ import io.github.julienmerconsulting.legerix.Legerix;
 // Extract natives + tessdata to a per-user cache, load both libs into the JVM.
 Path nativesDir   = Legerix.loadNatives();
 
-// Path to the extracted tessdata folder, ready to feed to tess4j.
+// Absolute paths of the two files loadNatives() loaded: what an
+// absolute-path binding takes. Never list the directory and guess.
+Path tesseractLib = Legerix.getTesseractLibraryPath();
+Path leptonicaLib = Legerix.getLeptonicaLibraryPath();
+
+// Path to the extracted tessdata folder.
 Path tessdataDir  = Legerix.getTessdataPath();
 
 // Detected runtime tier on Linux: "modern", "legacy" or "n/a" off-Linux.
 String tier       = Legerix.getGlibcTier();
 
-// Tesseract upstream version embedded in this jar (e.g. "5.5.0").
+// Tesseract upstream version embedded in this jar (e.g. "5.5.2").
 String tessVer    = Legerix.getTesseractVersion();
 ```
 
-### Typical OculiX-side wiring (tess4j consumer)
+### Typical wiring: Octachorix, by absolute path
 
 ```java
-Legerix.loadNatives();                          // BEFORE tess4j touches JNA
-ITesseract tess = new Tesseract();
-tess.setDatapath(Legerix.getTessdataPath().toString());
-tess.setLanguage("eng");
-String text = tess.doOCR(image);
+Scribe scribe = Scribe.builder()
+        .tesseractLibrary(Legerix.getTesseractLibraryPath())
+        .leptonicaLibrary(Legerix.getLeptonicaLibraryPath())
+        .datapath(Legerix.getTessdataPath())
+        .language("eng")
+        .build();
+String text = scribe.read(image, EnumSet.noneOf(PageLevel.class)).text();
 ```
+
+tess4j is not supported: it resolves `libtesseract` by short name through
+JNA and can bind a system Tesseract while Legerix's copy sits unused (see
+Legerix#20). `loadNatives()` refuses to run when tess4j is on the classpath
+and says so.
 
 ## Languages / tessdata
 
