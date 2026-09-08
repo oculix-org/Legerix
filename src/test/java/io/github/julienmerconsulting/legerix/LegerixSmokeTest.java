@@ -75,6 +75,32 @@ public class LegerixSmokeTest {
                 Legerix.filesToExtract(inJar, null).isEmpty());
     }
 
+    /**
+     * A Mac without Homebrew's codecs gets an instruction, not a dyld dump:
+     * the message names Homebrew and the formulae to install. Any other load
+     * failure is left untouched.
+     */
+    @Test
+    public void macWithoutHomebrewGetsAnInstruction() {
+        final String dyld = "/Users/x/.cache/legerix/5.5.2-1/darwin-aarch64/libleptonica.6.dylib: "
+                + "dlopen(/Users/x/.cache/legerix/5.5.2-1/darwin-aarch64/libleptonica.6.dylib, 0x0001): "
+                + "Library not loaded: /opt/homebrew/opt/jpeg-turbo/lib/libjpeg.8.dylib\n"
+                + "  Referenced from: <...> /Users/x/.cache/legerix/5.5.2-1/darwin-aarch64/libleptonica.6.dylib\n"
+                + "  Reason: tried: '/opt/homebrew/opt/jpeg-turbo/lib/libjpeg.8.dylib' (no such file)";
+        final String advice = Legerix.macOsHomebrewAdvice(dyld);
+        assertNotNull("a missing Homebrew codec must produce an instruction", advice);
+        assertTrue(advice.contains("brew install " + Legerix.MACOS_HOMEBREW_FORMULAE));
+        assertTrue(advice.contains("https://brew.sh"));
+
+        final String intel = "dlopen(...): Library not loaded: /usr/local/opt/libpng/lib/libpng16.16.dylib Reason: image not found";
+        assertNotNull("Intel Homebrew lives under /usr/local", Legerix.macOsHomebrewAdvice(intel));
+
+        assertTrue("an unrelated failure is not a Homebrew problem",
+                Legerix.macOsHomebrewAdvice("dlopen(...): no suitable image found. Did find: mach-o file, but is an incompatible architecture")
+                        == null);
+        assertTrue(Legerix.macOsHomebrewAdvice(null) == null);
+    }
+
     /** OCR of one image through Octachorix, bound to the files Legerix loaded. */
     private static String ocr(final BufferedImage img, final String language) throws Exception {
         final Scribe scribe = Scribe.builder()
