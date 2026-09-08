@@ -25,12 +25,18 @@ for tier in $TIERS; do
     continue
   fi
   rm -f "$dir/$MANIFEST"
-  # Regular files only, immediate children only, sorted for stable diffs.
-  # Written through a temp file: a redirection would create the manifest
-  # before find runs, and the manifest would list itself.
-  tmp="$(mktemp)"
+  # Regular files, immediate children only, sorted for stable diffs. Plain
+  # shell globbing rather than find: -printf is GNU-only and the macOS
+  # runners have BSD find. Written through a temp file, since a redirection
+  # would create the manifest before the loop runs and it would list itself.
   # Hidden files (.gitkeep) are repository plumbing, not natives.
-  find "$dir" -mindepth 1 -maxdepth 1 -type f ! -name "$MANIFEST" ! -name '.*' -printf '%f\n' | LC_ALL=C sort > "$tmp"
+  tmp="$(mktemp)"
+  for f in "$dir"/*; do
+    [ -f "$f" ] || continue
+    base="${f##*/}"
+    [ "$base" = "$MANIFEST" ] && continue
+    printf '%s\n' "$base"
+  done | LC_ALL=C sort > "$tmp"
   mv "$tmp" "$dir/$MANIFEST"
   count=$(wc -l < "$dir/$MANIFEST" | tr -d ' ')
   echo "$tier: $count file(s)"
