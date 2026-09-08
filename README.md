@@ -222,18 +222,26 @@ The natives are produced by GitHub Actions (`.github/workflows/build.yml`,
 7-job matrix). Reproducing locally just for one platform:
 
 ```bash
+NATIVES=src/main/resources/META-INF/legerix/natives
 PREFIX="$PWD/_prefix"
 mkdir -p "$PREFIX"
 ./scripts/build-leptonica.sh 1.87.0 "$PREFIX"
-./scripts/build-tesseract.sh 5.5.0  "$PREFIX"
-./scripts/fetch-traineddata.sh src/main/resources/tessdata
+./scripts/build-tesseract.sh 5.5.2  "$PREFIX"
+./scripts/fetch-traineddata.sh
 
-# Stage and package
-mkdir -p src/main/resources/linux-x86-64
-cp -L "$PREFIX/lib/libleptonica.so.6" src/main/resources/linux-x86-64/
-cp -L "$PREFIX/lib/libtesseract.so.5" src/main/resources/linux-x86-64/
+# Stage, declare what this tier ships, package
+mkdir -p "$NATIVES/linux-x86-64"
+cp -L "$PREFIX/lib/libleptonica.so.6" "$NATIVES/linux-x86-64/"
+cp -L "$PREFIX/lib/libtesseract.so.5" "$NATIVES/linux-x86-64/"
+LEGERIX_ALLOW_EMPTY_TIERS=1 ./scripts/write-natives-manifest.sh
 mvn -B install
 ```
+
+The manifest step is not optional: a tier without one is a tier Legerix
+refuses to load. `LEGERIX_ALLOW_EMPTY_TIERS=1` lets the six tiers this host
+did not build stay without a manifest; a release stages all seven and fails
+if one is empty. `scripts/run-payload-probes.sh` then exercises the packaging
+contract on the jar just built.
 
 CI is the source of truth for cross-platform builds; local builds populate
 only the current host's resource directory.
