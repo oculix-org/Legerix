@@ -41,41 +41,41 @@ jobs:
 
       - name: Stage natives into src/main/resources
         run: |
-          mkdir -p src/main/resources/linux-x86-64 \
-                   src/main/resources/linux-x86-64-legacy \
-                   src/main/resources/linux-aarch64 \
-                   src/main/resources/linux-aarch64-legacy \
-                   src/main/resources/darwin \
-                   src/main/resources/darwin-aarch64 \
-                   src/main/resources/win32-x86-64
+          mkdir -p src/main/resources/META-INF/legerix/natives/linux-x86-64 \
+                   src/main/resources/META-INF/legerix/natives/linux-x86-64-legacy \
+                   src/main/resources/META-INF/legerix/natives/linux-aarch64 \
+                   src/main/resources/META-INF/legerix/natives/linux-aarch64-legacy \
+                   src/main/resources/META-INF/legerix/natives/darwin \
+                   src/main/resources/META-INF/legerix/natives/darwin-aarch64 \
+                   src/main/resources/META-INF/legerix/natives/win32-x86-64
 
-          cp assets/libtesseract.so.5-linux-x86-64           src/main/resources/linux-x86-64/libtesseract.so.5
-          cp assets/libleptonica.so.6-linux-x86-64           src/main/resources/linux-x86-64/libleptonica.so.6
-          cp assets/libtesseract.so.5-linux-x86-64-legacy    src/main/resources/linux-x86-64-legacy/libtesseract.so.5
-          cp assets/libleptonica.so.6-linux-x86-64-legacy    src/main/resources/linux-x86-64-legacy/libleptonica.so.6
-          cp assets/libtesseract.so.5-linux-aarch64          src/main/resources/linux-aarch64/libtesseract.so.5
-          cp assets/libleptonica.so.6-linux-aarch64          src/main/resources/linux-aarch64/libleptonica.so.6
-          cp assets/libtesseract.so.5-linux-aarch64-legacy   src/main/resources/linux-aarch64-legacy/libtesseract.so.5
-          cp assets/libleptonica.so.6-linux-aarch64-legacy   src/main/resources/linux-aarch64-legacy/libleptonica.so.6
-          cp assets/libtesseract.5-darwin.dylib              src/main/resources/darwin/libtesseract.5.dylib
-          cp assets/libleptonica.6-darwin.dylib              src/main/resources/darwin/libleptonica.6.dylib
-          cp assets/libtesseract.5-darwin-aarch64.dylib      src/main/resources/darwin-aarch64/libtesseract.5.dylib
-          cp assets/libleptonica.6-darwin-aarch64.dylib      src/main/resources/darwin-aarch64/libleptonica.6.dylib
+          cp assets/libtesseract.so.5-linux-x86-64           src/main/resources/META-INF/legerix/natives/linux-x86-64/libtesseract.so.5
+          cp assets/libleptonica.so.6-linux-x86-64           src/main/resources/META-INF/legerix/natives/linux-x86-64/libleptonica.so.6
+          cp assets/libtesseract.so.5-linux-x86-64-legacy    src/main/resources/META-INF/legerix/natives/linux-x86-64-legacy/libtesseract.so.5
+          cp assets/libleptonica.so.6-linux-x86-64-legacy    src/main/resources/META-INF/legerix/natives/linux-x86-64-legacy/libleptonica.so.6
+          cp assets/libtesseract.so.5-linux-aarch64          src/main/resources/META-INF/legerix/natives/linux-aarch64/libtesseract.so.5
+          cp assets/libleptonica.so.6-linux-aarch64          src/main/resources/META-INF/legerix/natives/linux-aarch64/libleptonica.so.6
+          cp assets/libtesseract.so.5-linux-aarch64-legacy   src/main/resources/META-INF/legerix/natives/linux-aarch64-legacy/libtesseract.so.5
+          cp assets/libleptonica.so.6-linux-aarch64-legacy   src/main/resources/META-INF/legerix/natives/linux-aarch64-legacy/libleptonica.so.6
+          cp assets/libtesseract.5-darwin.dylib              src/main/resources/META-INF/legerix/natives/darwin/libtesseract.5.dylib
+          cp assets/libleptonica.6-darwin.dylib              src/main/resources/META-INF/legerix/natives/darwin/libleptonica.6.dylib
+          cp assets/libtesseract.5-darwin-aarch64.dylib      src/main/resources/META-INF/legerix/natives/darwin-aarch64/libtesseract.5.dylib
+          cp assets/libleptonica.6-darwin-aarch64.dylib      src/main/resources/META-INF/legerix/natives/darwin-aarch64/libleptonica.6.dylib
           # Windows: unzip the full vcpkg DLL bundle into the resource dir.
-          unzip -o assets/legerix-win-x86-64.zip -d src/main/resources/win32-x86-64/
+          unzip -o assets/legerix-win-x86-64.zip -d src/main/resources/META-INF/legerix/natives/win32-x86-64/
 
       - name: Write per-tier natives manifest (Legerix#21)
-        run: bash ./scripts/write-natives-manifest.sh src/main/resources
+        run: bash ./scripts/write-natives-manifest.sh src/main/resources/META-INF/legerix/natives
 
       - name: Fetch traineddata (5 bundled languages)
-        run: bash ./scripts/fetch-traineddata.sh src/main/resources/tessdata
+        run: bash ./scripts/fetch-traineddata.sh src/main/resources/META-INF/legerix/tessdata
 
       - name: Verify staged payload
         run: |
           echo "=== Natives staged ==="
           find src/main/resources -type f \( -name "*.so*" -o -name "*.dylib" -o -name "*.dll" \) | sort
           UNIX_COUNT=$(find src/main/resources -type f \( -name "*.so*" -o -name "*.dylib" \) | wc -l)
-          WIN_COUNT=$(find src/main/resources/win32-x86-64 -type f -name "*.dll" | wc -l)
+          WIN_COUNT=$(find src/main/resources/META-INF/legerix/natives/win32-x86-64 -type f -name "*.dll" | wc -l)
           if [ "$UNIX_COUNT" -ne 12 ]; then
             echo "ERROR: expected 12 Linux+macOS natives, found $UNIX_COUNT"
             exit 1
@@ -85,7 +85,7 @@ jobs:
             exit 1
           fi
           for lang in eng fra spa chi_sim hin; do
-            test -f "src/main/resources/tessdata/${lang}.traineddata" \
+            test -f "src/main/resources/META-INF/legerix/tessdata/${lang}.traineddata" \
               || { echo "ERROR: missing tessdata/${lang}.traineddata"; exit 1; }
           done
           echo "OK: 12 Linux/macOS natives + $WIN_COUNT Windows DLLs + 5 traineddata files"
