@@ -47,32 +47,139 @@ public class LegerixSmokeTest {
         assertEquals("leptonica should sit in the extraction dir", dir.toAbsolutePath(), leptonica.getParent());
     }
 
+    // ---- Legerix#21: the payload contract, checked on a described packaging ----
+
+    /** A tier directory of a payload, described file by file. */
+    private static Path payloadWith(final String tier, final String manifest, final String... files) throws Exception {
+        final Path root = java.nio.file.Files.createTempDirectory("legerix-payload-");
+        final Path tierDir = root.resolve("META-INF/legerix/natives/" + tier);
+        java.nio.file.Files.createDirectories(tierDir);
+        for (final String f : files) {
+            java.nio.file.Files.write(tierDir.resolve(f), new byte[]{1, 2, 3});
+        }
+        if (manifest != null) {
+            java.nio.file.Files.write(tierDir.resolve("legerix-natives.txt"),
+                    manifest.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        }
+        return root;
+    }
+
+    private static java.util.List<String> declared(final Path root, final String tier) throws Exception {
+        return Legerix.declaredNatives(Legerix.Payload.ofDirectory(root),
+                "META-INF/legerix/natives/" + tier, Legerix.OS.LINUX);
+    }
+
+    private static String refusalFor(final Path root, final String tier) {
+        try {
+            declared(root, tier);
+        } catch (final Exception e) {
+            return String.valueOf(e.getMessage());
+        }
+        return null;
+    }
+
     /**
-     * Legerix#21: when Legerix is shaded into a consumer's fat jar, that jar
-     * may carry the consumer's own natives under the same tier directory
-     * (OculiX ships OpenCV there). Extraction must follow the manifest the
-     * build wrote, never the directory listing, and a jar without a manifest
-     * must yield nothing beyond the canonical pair extracted separately.
+     * What Legerix extracts is what its own manifest names, in that order.
+     * A file sitting in the same directory without being declared, which is
+     * what a co-bundling consumer's native looks like, is not extracted and
+     * is not an error either: it is not ours.
      */
     @Test
-    public void extractionFollowsTheManifestNotTheJarDirectory() {
-        final java.util.List<String> inJar = java.util.Arrays.asList(
-                "libopencv_java4100.so",   // a co-bundling consumer's native, not ours
-                "libtesseract.so.5",
-                "libleptonica.so.6",
-                "libjpeg.so.8",
-                Legerix.NATIVES_MANIFEST);
-        final String manifest = "# written by scripts/write-natives-manifest.sh\n"
-                + "libjpeg.so.8\nlibleptonica.so.6\nlibtesseract.so.5\n"
-                + "libpng16.so.16\n";   // named but absent from this jar: skipped, not an error
+    public void extractsWhatTheManifestDeclaresAndIgnoresTheRest() throws Exception {
+        final Path root = payloadWith("linux-x86-64",
+                "# written by scripts/write-natives-manifest.sh\n"
+                        + "libleptonica.so.6\nlibtesseract.so.5\nlibjpeg.so.8\n",
+                "libleptonica.so.6", "libtesseract.so.5", "libjpeg.so.8", "libopencv_java4100.so");
 
-        final java.util.List<String> wanted = Legerix.filesToExtract(inJar, manifest);
-        assertEquals(java.util.Arrays.asList("libjpeg.so.8", "libleptonica.so.6", "libtesseract.so.5"), wanted);
-        assertTrue("a consumer's native must never be extracted", !wanted.contains("libopencv_java4100.so"));
-        assertTrue("the manifest itself is not a native", !wanted.contains(Legerix.NATIVES_MANIFEST));
+        assertEquals(java.util.Arrays.asList("libleptonica.so.6", "libtesseract.so.5", "libjpeg.so.8"),
+                declared(root, "linux-x86-64"));
+    }
 
-        assertTrue("no manifest, nothing extracted beyond the canonical pair",
-                Legerix.filesToExtract(inJar, null).isEmpty());
+    /**
+     * The manifest is a contract, not a hint. Each of these packagings is
+     * refused before anything is loaded, and the message says which file and
+     * which payload.
+     */
+    @Test
+    public void anIncompleteOrAmbiguousPackagingIsRefused() throws Exception {
+        final String ok = "libleptonica.so.6\nlibtesseract.so.5\n";
+
+        final Path noManifest = payloadWith("linux-x86-64", null, "libleptonica.so.6", "libtesseract.so.5");
+        assertTrue("no manifest must be refused",
+                String.valueOf(refusalFor(noManifest, "linux-x86-64")).contains("does not declare what it ships"));
+
+        final Path missingFile = payloadWith("linux-x86-64", ok + "libjpeg.so.8\n",
+                "libleptonica.so.6", "libtesseract.so.5");
+        assertTrue("a declared file that is absent must be refused",
+                String.valueOf(refusalFor(missingFile, "linux-x86-64")).contains("does not contain it"));
+
+        final Path noPair = payloadWith("linux-x86-64", "libjpeg.so.8\n", "libjpeg.so.8");
+        assertTrue("the canonical pair must be declared",
+                String.valueOf(refusalFor(noPair, "linux-x86-64")).contains("does not declare libleptonica.so.6"));
+
+        final Path traversal = payloadWith("linux-x86-64", ok + "../../evil.so\n",
+                "libleptonica.so.6", "libtesseract.so.5");
+        assertTrue("a path is not a file name",
+                String.valueOf(refusalFor(traversal, "linux-x86-64")).contains("invalid entry"));
+
+        final Path twice = payloadWith("linux-x86-64", ok + "libtesseract.so.5\n",
+                "libleptonica.so.6", "libtesseract.so.5");
+        assertTrue("a duplicate entry is ambiguous",
+                String.valueOf(refusalFor(twice, "linux-x86-64")).contains("twice"));
+
+        final Path itself = payloadWith("linux-x86-64", ok + "legerix-natives.txt\n",
+                "libleptonica.so.6", "libtesseract.so.5");
+        assertTrue("the manifest is not a native",
+                String.valueOf(refusalFor(itself, "linux-x86-64")).contains("invalid entry"));
+    }
+
+    /**
+     * Nothing outside META-INF/legerix/ is read: a consumer's natives in the
+     * generic top-level directories of the old layout are invisible, even
+     * when they carry the exact names Legerix uses.
+     */
+    @Test
+    public void theOldGenericDirectoriesAreNotReadAnyMore() throws Exception {
+        final Path root = payloadWith("linux-x86-64", "libleptonica.so.6\nlibtesseract.so.5\n",
+                "libleptonica.so.6", "libtesseract.so.5");
+        final Path legacyDir = root.resolve("linux-x86-64");
+        java.nio.file.Files.createDirectories(legacyDir);
+        java.nio.file.Files.write(legacyDir.resolve("libtesseract.so.5"), new byte[]{9, 9});
+        java.nio.file.Files.write(legacyDir.resolve("legerix-natives.txt"),
+                "libtesseract.so.5\n".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+
+        assertEquals(java.util.Arrays.asList("libleptonica.so.6", "libtesseract.so.5"),
+                declared(root, "linux-x86-64"));
+        assertTrue("a payload that only has the old layout is refused",
+                String.valueOf(refusalFor(root, "linux-aarch64")).contains("does not declare what it ships"));
+    }
+
+    /**
+     * Legerix reads its version from its own payload, not from the jar
+     * manifest, which belongs to the consumer once Legerix is shaded.
+     */
+    @Test
+    public void identityComesFromItsOwnPayload() {
+        assertEquals("5.5.2", Legerix.getTesseractVersion());
+        assertTrue("the Legerix version carries the build suffix",
+                Legerix.getLegerixVersion().startsWith(Legerix.getTesseractVersion() + "-"));
+    }
+
+    /**
+     * The extraction directory is private to this loader run: it lives under
+     * the Legerix version, holds the lock file that keeps another JVM from
+     * reaping it, and is not the version root itself, so two consumers of the
+     * same version never share one.
+     */
+    @Test
+    public void extractionDirectoryIsPrivateAndClaimed() throws Exception {
+        final Path dir = Legerix.loadNatives();
+        assertTrue(dir + " should hold the lock", java.nio.file.Files.exists(dir.resolve(".legerix-lock")));
+        assertEquals("it lives under the Legerix version",
+                Legerix.getLegerixVersion(), dir.getParent().getFileName().toString());
+        assertTrue("it is a private directory of this run, not the version root",
+                dir.getFileName().toString().length() > "linux-x86-64".length());
+        assertEquals("tessdata is extracted inside it", dir, Legerix.getTessdataPath().getParent());
     }
 
     /**
