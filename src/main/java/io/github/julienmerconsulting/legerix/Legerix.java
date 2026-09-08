@@ -598,11 +598,26 @@ public final class Legerix {
         }
     }
 
+    /** Per-tier list of the files Legerix ships, written at build time. */
+    static final String NATIVES_MANIFEST = "legerix-natives.txt";
+
     /**
-     * Extract every regular file directly under the given classpath resource
-     * directory into {@code target}, idempotent (skips files already on disk).
-     * Transparently handles JAR mode (running from a packaged jar) and
-     * exploded-classpath mode (running from {@code target/classes} in dev/test).
+     * Extract the natives Legerix ships for a tier into {@code target},
+     * idempotent (skips files already on disk).
+     *
+     * <p>In JAR mode the jar that contains {@code Legerix.class} is read, and
+     * that jar is not necessarily Legerix's own: a consumer that shades
+     * Legerix (OculiX's fat jars do) may carry other natives under the very
+     * same tier directory, OpenCV for one. Extracting "everything under the
+     * tier" therefore copied a consumer's files into Legerix's cache and
+     * presented them as bundled (Legerix#21, measured byte for byte by David
+     * Young on macOS and Linux). Only the files named in the tier's
+     * {@link #NATIVES_MANIFEST}, written by the build, are extracted now; a
+     * jar without a manifest gets nothing beyond the canonical pair that
+     * {@link #librariesFor} already extracted, and says so.
+     *
+     * <p>Exploded-classpath mode ({@code target/classes} in dev/test) is
+     * never shaded, so it keeps extracting the directory as is.
      */
     private static void extractAllFromResourceDir(final String resourceDir, final Path target) throws IOException {
         final URL location = Legerix.class.getProtectionDomain().getCodeSource().getLocation();
@@ -635,9 +650,11 @@ public final class Legerix {
             }
             return;
         }
-        // Packaged JAR: enumerate entries under the resource prefix.
+        // Packaged JAR, possibly somebody else's: extract only what the
+        // manifest names, among the entries actually present under the tier.
         try (JarFile jar = new JarFile(codeSourcePath.toFile())) {
             final String prefix = resourceDir + "/";
+            final java.util.List<String> present = new java.util.ArrayList<>();
             final Enumeration<JarEntry> entries = jar.entries();
             while (entries.hasMoreElements()) {
                 final JarEntry je = entries.nextElement();
@@ -647,9 +664,50 @@ public final class Legerix {
                 final String tail = name.substring(prefix.length());
                 // Only immediate children, no nested subdirs.
                 if (tail.isEmpty() || tail.contains("/")) continue;
-                extractIfMissing(name, target.resolve(tail));
+                present.add(tail);
+            }
+            final JarEntry manifestEntry = jar.getJarEntry(prefix + NATIVES_MANIFEST);
+            String manifest = null;
+            if (manifestEntry != null) {
+                try (InputStream in = jar.getInputStream(manifestEntry)) {
+                    manifest = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+                }
+            }
+            final java.util.List<String> wanted = filesToExtract(present, manifest);
+            if (manifest == null) {
+                logger.log(Level.WARNING, "No {0} under {1} in {2}: only the canonical tesseract/leptonica pair "
+                        + "is extracted; other natives Legerix may ship for this tier are left in the jar",
+                        new Object[]{NATIVES_MANIFEST, resourceDir, codeSourcePath});
+            }
+            for (final String tail : wanted) {
+                extractIfMissing(prefix + tail, target.resolve(tail));
             }
         }
+    }
+
+    /**
+     * The files to extract for a tier, given the entries present under the
+     * tier directory of the jar and the content of that tier's
+     * {@link #NATIVES_MANIFEST}: the manifest's entries, in manifest order,
+     * restricted to those actually present. A {@code null} manifest yields
+     * nothing: without it there is no way to tell Legerix's files from a
+     * co-bundling consumer's (Legerix#21). Blank lines and lines starting
+     * with {@code #} in the manifest are ignored.
+     */
+    static java.util.List<String> filesToExtract(final java.util.Collection<String> present, final String manifest) {
+        final java.util.List<String> out = new java.util.ArrayList<>();
+        if (manifest == null) {
+            return out;
+        }
+        final java.util.Set<String> available = new java.util.HashSet<>(present);
+        for (final String raw : manifest.split("\\R")) {
+            final String line = raw.trim();
+            if (line.isEmpty() || line.startsWith("#") || line.equals(NATIVES_MANIFEST)) continue;
+            if (available.contains(line) && !out.contains(line)) {
+                out.add(line);
+            }
+        }
+        return out;
     }
 
     // dlopen(3) flags used to force RTLD_GLOBAL on Linux — see loadBundledLib.

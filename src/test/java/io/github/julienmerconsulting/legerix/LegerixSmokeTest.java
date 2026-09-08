@@ -47,6 +47,34 @@ public class LegerixSmokeTest {
         assertEquals("leptonica should sit in the extraction dir", dir.toAbsolutePath(), leptonica.getParent());
     }
 
+    /**
+     * Legerix#21: when Legerix is shaded into a consumer's fat jar, that jar
+     * may carry the consumer's own natives under the same tier directory
+     * (OculiX ships OpenCV there). Extraction must follow the manifest the
+     * build wrote, never the directory listing, and a jar without a manifest
+     * must yield nothing beyond the canonical pair extracted separately.
+     */
+    @Test
+    public void extractionFollowsTheManifestNotTheJarDirectory() {
+        final java.util.List<String> inJar = java.util.Arrays.asList(
+                "libopencv_java4100.so",   // a co-bundling consumer's native, not ours
+                "libtesseract.so.5",
+                "libleptonica.so.6",
+                "libjpeg.so.8",
+                Legerix.NATIVES_MANIFEST);
+        final String manifest = "# written by scripts/write-natives-manifest.sh\n"
+                + "libjpeg.so.8\nlibleptonica.so.6\nlibtesseract.so.5\n"
+                + "libpng16.so.16\n";   // named but absent from this jar: skipped, not an error
+
+        final java.util.List<String> wanted = Legerix.filesToExtract(inJar, manifest);
+        assertEquals(java.util.Arrays.asList("libjpeg.so.8", "libleptonica.so.6", "libtesseract.so.5"), wanted);
+        assertTrue("a consumer's native must never be extracted", !wanted.contains("libopencv_java4100.so"));
+        assertTrue("the manifest itself is not a native", !wanted.contains(Legerix.NATIVES_MANIFEST));
+
+        assertTrue("no manifest, nothing extracted beyond the canonical pair",
+                Legerix.filesToExtract(inJar, null).isEmpty());
+    }
+
     /** OCR of one image through Octachorix, bound to the files Legerix loaded. */
     private static String ocr(final BufferedImage img, final String language) throws Exception {
         final Scribe scribe = Scribe.builder()
