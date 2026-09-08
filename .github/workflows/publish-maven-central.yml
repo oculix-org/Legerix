@@ -67,6 +67,9 @@ jobs:
           # Windows: unzip the full vcpkg DLL bundle into the resource dir.
           unzip -o assets/legerix-win-x86-64.zip -d src/main/resources/win32-x86-64/
 
+      - name: Write per-tier natives manifest (Legerix#21)
+        run: bash ./scripts/write-natives-manifest.sh src/main/resources
+
       - name: Fetch traineddata (5 bundled languages)
         run: bash ./scripts/fetch-traineddata.sh src/main/resources/tessdata
 
