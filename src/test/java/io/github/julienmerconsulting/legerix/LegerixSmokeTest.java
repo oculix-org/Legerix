@@ -1,9 +1,9 @@
 package io.github.julienmerconsulting.legerix;
 
-import net.sourceforge.tess4j.ITesseract;
-import net.sourceforge.tess4j.Tesseract;
 import org.junit.Assume;
 import org.junit.Test;
+import org.oculix.octachorix.PageLevel;
+import org.oculix.octachorix.Scribe;
 
 import java.awt.Color;
 import java.awt.Font;
@@ -11,7 +11,7 @@ import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.nio.file.Path;
-import java.util.Locale;
+import java.util.EnumSet;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
@@ -20,10 +20,47 @@ import static org.junit.Assert.assertTrue;
 
 /**
  * Smoke test: extract natives, run OCR on a programmatically-rendered image,
- * assert recognized text. tess4j is used as the JNA binding consumer; Legerix
- * only ships the natives + traineddata.
+ * assert recognized text. Octachorix is the binding consumer, fed the absolute
+ * paths Legerix publishes; Legerix only ships the natives + traineddata.
  */
 public class LegerixSmokeTest {
+
+    /**
+     * The contract every consumer relies on: the two paths Legerix publishes
+     * are the files it loaded, they exist, they are not empty, and they live
+     * in the extraction directory loadNatives() returned.
+     */
+    @Test
+    public void publishesTheLibrariesItLoaded() throws Exception {
+        final Path dir = Legerix.loadNatives();
+        final Path tesseract = Legerix.getTesseractLibraryPath();
+        final Path leptonica = Legerix.getLeptonicaLibraryPath();
+        assertNotNull(tesseract);
+        assertNotNull(leptonica);
+        assertTrue(tesseract + " should be absolute", tesseract.isAbsolute());
+        assertTrue(leptonica + " should be absolute", leptonica.isAbsolute());
+        assertTrue(tesseract + " should exist", tesseract.toFile().isFile());
+        assertTrue(leptonica + " should exist", leptonica.toFile().isFile());
+        assertTrue(tesseract + " should not be empty", tesseract.toFile().length() > 0);
+        assertTrue(leptonica + " should not be empty", leptonica.toFile().length() > 0);
+        assertEquals("tesseract should sit in the extraction dir", dir.toAbsolutePath(), tesseract.getParent());
+        assertEquals("leptonica should sit in the extraction dir", dir.toAbsolutePath(), leptonica.getParent());
+    }
+
+    /** OCR of one image through Octachorix, bound to the files Legerix loaded. */
+    private static String ocr(final BufferedImage img, final String language) throws Exception {
+        final Scribe scribe = Scribe.builder()
+                .tesseractLibrary(Legerix.getTesseractLibraryPath())
+                .leptonicaLibrary(Legerix.getLeptonicaLibraryPath())
+                .datapath(Legerix.getTessdataPath().toAbsolutePath())
+                .language(language)
+                .build();
+        try {
+            return scribe.read(img, EnumSet.noneOf(PageLevel.class)).text().trim();
+        } finally {
+            scribe.close();
+        }
+    }
 
     @Test
     public void loadsNativesAndExtractsTessdata() throws Exception {
@@ -49,11 +86,7 @@ public class LegerixSmokeTest {
 
         final BufferedImage img = renderText("Hello Legerix", 600, 120);
 
-        final ITesseract tess = new Tesseract();
-        tess.setDatapath(Legerix.getTessdataPath().toAbsolutePath().toString());
-        tess.setLanguage("eng");
-
-        final String result = tess.doOCR(img).trim();
+        final String result = ocr(img, "eng");
         assertEquals("Hello Legerix", result);
     }
 
@@ -70,9 +103,9 @@ public class LegerixSmokeTest {
      */
     @Test
     public void loadedTesseractIsBundledNotSystem() throws Exception {
-        final Path dir = Legerix.loadNatives();
-        final Path tesseract = findTesseractFile(dir);
-        final String actual = Legerix.getLoadedTesseractVersion(tesseract.toAbsolutePath().toString());
+        Legerix.loadNatives();
+        final Path tesseract = Legerix.getTesseractLibraryPath();
+        final String actual = Legerix.getLoadedTesseractVersion(tesseract.toString());
         final String bundled = Legerix.getTesseractVersion();
         assertNotNull("TessVersion() returned null — libtesseract may not be loaded", actual);
         // MAJOR.MINOR comparison: Windows vcpkg ships 5.5.2, Linux/mac from-source 5.5.0.
@@ -84,18 +117,6 @@ public class LegerixSmokeTest {
                 "Wrong Tesseract MAJOR.MINOR in " + tesseract + ": expected " + bundled
                         + " got " + actual,
                 a.length >= 2 && b.length >= 2 && a[0].equals(b[0]) && a[1].equals(b[1]));
-    }
-
-    private static Path findTesseractFile(final Path dir) throws java.io.IOException {
-        try (java.util.stream.Stream<Path> s = java.nio.file.Files.list(dir)) {
-            return s
-                    .filter(p -> {
-                        final String name = p.getFileName().toString().toLowerCase(Locale.ROOT);
-                        return name.startsWith("tesseract") || name.startsWith("libtesseract");
-                    })
-                    .findFirst()
-                    .orElseThrow(() -> new IllegalStateException("No tesseract library found in " + dir));
-        }
     }
 
     /**
@@ -124,11 +145,7 @@ public class LegerixSmokeTest {
 
         final BufferedImage img = renderText("Cafe francais", 700, 120);
 
-        final ITesseract tess = new Tesseract();
-        tess.setDatapath(Legerix.getTessdataPath().toAbsolutePath().toString());
-        tess.setLanguage("fra");
-
-        final String result = tess.doOCR(img).trim();
+        final String result = ocr(img, "fra");
         // Tesseract fra may render "Cafe" and "francais" as-is or with restored
         // accents ("Café", "français") depending on font hinting. Accept both.
         assertTrue("fra OCR should recognize the word 'Cafe' or 'Café', got: " + result,
