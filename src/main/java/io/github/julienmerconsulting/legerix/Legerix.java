@@ -10,22 +10,32 @@ import java.util.HashMap;
 import java.util.Map;
 
 import java.io.BufferedReader;
+import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.URISyntaxException;
 import java.net.URL;
+import java.nio.channels.FileChannel;
+import java.nio.channels.FileLock;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Enumeration;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Properties;
 import java.util.Set;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
@@ -135,9 +145,37 @@ public final class Legerix {
     public static final List<String> BUNDLED_LANGUAGES =
             Collections.unmodifiableList(Arrays.asList("eng", "fra", "spa", "chi_sim", "hin"));
 
+    /**
+     * Legerix's own space inside the jar. Everything Legerix ships lives
+     * under it and nothing else in the jar belongs to Legerix: a consumer
+     * that shades Legerix keeps its own natives under whatever generic
+     * directory names it chooses, and the two cannot collide any more
+     * (Legerix#21). Never read a native through the class loader: another
+     * jar can expose the very same path.
+     */
+    private static final String PAYLOAD_ROOT = "META-INF/legerix";
+    private static final String NATIVES_ROOT = PAYLOAD_ROOT + "/natives";
+    private static final String TESSDATA_ROOT = PAYLOAD_ROOT + "/tessdata";
+    private static final String IDENTITY_RESOURCE = PAYLOAD_ROOT + "/legerix.properties";
+
+    /** Per-tier list of the files Legerix ships, written at build time. */
+    static final String NATIVES_MANIFEST = "legerix-natives.txt";
+
+    /** Marks an extraction directory as belonging to a live JVM. */
+    private static final String LOCK_FILE = ".legerix-lock";
+
     /** Cached, idempotent extraction directory. */
     private static volatile Path extractionDir;
+    private static volatile Path tessdataDir;
     private static volatile String detectedTier;
+    private static volatile String legerixVersion;
+    private static volatile String tesseractVersion;
+    // Held open for the life of the JVM: another JVM that finds this lock
+    // taken leaves our extraction directory alone.
+    private static FileChannel lockChannel;
+    private static FileLock ownLock;
+    /** True while loadNatives() runs, to catch reentrance through a getter. */
+    private static volatile boolean loading;
     // The two files loadNatives() System.load()s, by absolute path. Published
     // through getTesseractLibraryPath() / getLeptonicaLibraryPath() so that a
     // consumer binding by absolute path (Octachorix) never has to list the
@@ -183,37 +221,63 @@ public final class Legerix {
         }
 
         refuseTess4j();
+        loading = true;
+        try {
 
         final OS os = OS.getCurrent();
         final Arch arch = Arch.getCurrent();
         final String tier = detectGlibcTier(os);
         detectedTier = tier;
-        final String resourceDir = resourceDirFor(os, arch, tier);
+        final String tierDir = NATIVES_ROOT + "/" + resourceDirFor(os, arch, tier);
 
-        final Path target = cacheDir().resolve(cacheVersion()).resolve(resourceDir);
-        Files.createDirectories(target);
+        // ONE source, opened once: the container of Legerix.class. The
+        // manifest, the natives and the language models are all read from it
+        // with jar.getInputStream(entry), never re-resolved through the class
+        // loader, which any other jar on the class path can answer.
+        try (Payload payload = Payload.open()) {
+            // Legerix's identity comes from its own payload too. The jar
+            // manifest is the consumer's after shading, so
+            // getImplementationVersion() cannot be trusted for the cache key
+            // or the expected Tesseract version (Legerix#21).
+            final Properties identity = payload.readProperties(IDENTITY_RESOURCE);
+            legerixVersion = required(identity, "legerix.version", payload);
+            tesseractVersion = required(identity, "tesseract.version", payload);
 
-        for (final String lib : librariesFor(os)) {
-            extractIfMissing(resourceDir + "/" + lib, target.resolve(lib));
+            final List<String> files = declaredNatives(payload, tierDir, os);
+
+            // A brand new private directory per loader initialisation. The
+            // old scheme reused <version>/<tier> and skipped any file already
+            // there, so a directory could end up holding the union of what
+            // several code sources contributed over time, which is exactly
+            // what made the #20 investigation unresolvable. Nothing is ever
+            // completed from another run here: what we extract is what this
+            // payload holds, and nothing else.
+            final Path versionRoot = cacheDir().resolve(legerixVersion);
+            Files.createDirectories(versionRoot);
+            final Path target = Files.createTempDirectory(versionRoot, resourceDirFor(os, arch, tier) + "-");
+            claim(target);
+            reapAbandonedExtractions(versionRoot, target);
+
+            for (final String name : files) {
+                payload.extract(tierDir + "/" + name, target.resolve(name));
+            }
+
+            // tessdata: bundled lightweight (tessdata_fast) language models
+            // covering ~80% of the world population, from the same source,
+            // into the same private directory. Consumers wanting other
+            // languages drop additional *.traineddata files in
+            // getTessdataPath().
+            final Path tessdata = target.resolve("tessdata");
+            Files.createDirectories(tessdata);
+            for (final String lang : BUNDLED_LANGUAGES) {
+                payload.extract(TESSDATA_ROOT + "/" + lang + ".traineddata",
+                        tessdata.resolve(lang + ".traineddata"));
+            }
+            tessdataDir = tessdata;
+            extractionDir = target;
         }
 
-        // Extract every other regular file under the platform's resource dir.
-        // On Linux/macOS this is a no-op (only the canonical pair lives there).
-        // On Windows it picks up the ~10 transitive vcpkg DLLs (libpng,
-        // libtiff, libjpeg-turbo, libwebp, openjp2, zlib, libcurl,
-        // libarchive, ...) that tesseract.dll needs at runtime.
-        extractAllFromResourceDir(resourceDir, target);
-
-        // tessdata: bundled lightweight (tessdata_fast) language models covering
-        // ~80% of the world population. Consumers wanting other languages can
-        // drop additional *.traineddata files alongside these in the same
-        // cache directory (see getTessdataPath()).
-        final Path tessdataDir = cacheDir().resolve(cacheVersion()).resolve("tessdata");
-        Files.createDirectories(tessdataDir);
-        for (final String lang : BUNDLED_LANGUAGES) {
-            extractIfMissing("tessdata/" + lang + ".traineddata",
-                    tessdataDir.resolve(lang + ".traineddata"));
-        }
+        final Path target = extractionDir;
 
         // Best-effort hints for a consumer that would still resolve
         // tesseract/leptonica by SHORT NAME through JNA. The supported
@@ -301,12 +365,15 @@ public final class Legerix {
 
         leptonicaLibraryPath = leptonica;
         tesseractLibraryPath = tesseract;
-        extractionDir = target;
         loaded = true;
 
         logger.log(Level.FINE, "Legerix natives loaded from {0} (tier={1})",
                 new Object[]{target, tier});
         return target;
+
+        } finally {
+            loading = false;
+        }
     }
 
     /**
@@ -321,14 +388,8 @@ public final class Legerix {
      *         {@link IOException} is wrapped as cause)
      */
     public static Path getTessdataPath() {
-        if (!loaded) {
-            try {
-                loadNatives();
-            } catch (final IOException e) {
-                throw new IllegalStateException("loadNatives() failed", e);
-            }
-        }
-        return cacheDir().resolve(cacheVersion()).resolve("tessdata");
+        ensureLoaded();
+        return tessdataDir;
     }
 
     /**
@@ -369,6 +430,15 @@ public final class Legerix {
 
     private static void ensureLoaded() {
         if (!loaded) {
+            // loadNatives() is synchronized on the class, and a class monitor
+            // is reentrant: a getter called from inside loadNatives() before
+            // the loaded flag is set would silently recurse instead of
+            // blocking, each turn extracting one more private directory.
+            // Fail with a name instead of hanging.
+            if (loading) {
+                throw new IllegalStateException("Legerix: a public getter was called from inside loadNatives() "
+                        + "before it finished; internal code must read the fields, not the getters");
+            }
             try {
                 loadNatives();
             } catch (final IOException e) {
@@ -401,32 +471,35 @@ public final class Legerix {
      *         classpath without manifest)
      */
     public static String getTesseractVersion() {
-        final String v = Legerix.class.getPackage().getImplementationVersion();
-        if (v != null) {
-            // Strip the build suffix (e.g. "5.5.0-1" -> "5.5.0").
-            final int dash = v.indexOf('-');
-            return dash > 0 ? v.substring(0, dash) : v;
-        }
-        return "5.5.0";
+        ensureLoaded();
+        return tesseractVersion;
     }
 
-    // Development-time fallback for cacheVersion() when running from
-    // target/classes (no jar manifest). MUST be kept in sync with pom.xml's
-    // <version> so that mvn test picks up new natives after every bump.
-    // David Young measured a real user-facing bug on this in Legerix#20:
-    // on upgrade 5.5.0-8 -> 5.5.0-9 the cache was keyed on the bare
-    // "5.5.0" (getTesseractVersion() strips the build suffix), so
-    // extractIfMissing early-returned and users kept the old natives.
-    private static final String DEV_CACHE_VERSION = "5.5.2-1";
+    /**
+     * Returns Legerix's own full version, e.g. {@code "5.5.2-2"}: the upstream
+     * Tesseract version and the Legerix build suffix. Read from Legerix's own
+     * payload, never from the jar manifest, which belongs to the consumer once
+     * Legerix is shaded (Legerix#21). It names the extraction cache, so
+     * bumping only the build suffix gives every consumer a fresh payload.
+     *
+     * @return the Legerix version this artifact was built as
+     * @throws IllegalStateException if natives have not been loaded yet and
+     *         the implicit {@link #loadNatives()} call fails
+     */
+    public static String getLegerixVersion() {
+        ensureLoaded();
+        return legerixVersion;
+    }
 
-    // Full Legerix Maven version (e.g. "5.5.0-3"), used as cache key so that
-    // bumping only the Legerix build suffix invalidates stale extracted DLLs.
-    // Under mvn test the class loads from target/classes with no manifest, so
-    // getImplementationVersion() returns null — we fall back to DEV_CACHE_VERSION
-    // which includes the suffix, not to getTesseractVersion() which strips it.
-    private static String cacheVersion() {
-        final String v = Legerix.class.getPackage().getImplementationVersion();
-        return v != null ? v : DEV_CACHE_VERSION;
+    private static String required(final Properties identity, final String key, final Payload payload)
+            throws IOException {
+        final String v = identity.getProperty(key);
+        if (v == null || v.trim().isEmpty() || v.contains("${")) {
+            throw new IOException("Legerix: " + IDENTITY_RESOURCE + " in " + payload.source()
+                    + " declares no usable " + key + " (found: " + v + "). This payload was not built by "
+                    + "Legerix's own pom, or resource filtering did not run.");
+        }
+        return v.trim();
     }
 
     /**
@@ -588,126 +661,288 @@ public final class Legerix {
         return Paths.get(home, ".cache", "legerix");
     }
 
-    private static void extractIfMissing(final String resource, final Path target) throws IOException {
-        if (Files.exists(target)) return;
-        try (InputStream in = Legerix.class.getClassLoader().getResourceAsStream(resource)) {
-            if (in == null) {
-                throw new IOException("Resource not found in classpath: " + resource);
-            }
-            Files.copy(in, target, StandardCopyOption.REPLACE_EXISTING);
-        }
-    }
-
-    /** Per-tier list of the files Legerix ships, written at build time. */
-    static final String NATIVES_MANIFEST = "legerix-natives.txt";
-
     /**
-     * Extract the natives Legerix ships for a tier into {@code target},
-     * idempotent (skips files already on disk).
-     *
-     * <p>In JAR mode the jar that contains {@code Legerix.class} is read, and
-     * that jar is not necessarily Legerix's own: a consumer that shades
-     * Legerix (OculiX's fat jars do) may carry other natives under the very
-     * same tier directory, OpenCV for one. Extracting "everything under the
-     * tier" therefore copied a consumer's files into Legerix's cache and
-     * presented them as bundled (Legerix#21, measured byte for byte by David
-     * Young on macOS and Linux). Only the files named in the tier's
-     * {@link #NATIVES_MANIFEST}, written by the build, are extracted now; a
-     * jar without a manifest gets nothing beyond the canonical pair that
-     * {@link #librariesFor} already extracted, and says so.
-     *
-     * <p>Exploded-classpath mode ({@code target/classes} in dev/test) is
-     * never shaded, so it keeps extracting the directory as is.
+     * The single source Legerix reads its payload from: the container of
+     * {@code Legerix.class}, a jar or an exploded directory. Every byte
+     * Legerix extracts comes from here, read entry by entry. The class
+     * loader is never used for the payload: another jar on the class path
+     * can expose the very same resource path, and whoever comes first then
+     * answers, which is the ambiguity Legerix#21 is about. If this source
+     * cannot be resolved or opened, Legerix fails rather than looking
+     * somewhere else to succeed anyway.
      */
-    private static void extractAllFromResourceDir(final String resourceDir, final Path target) throws IOException {
-        final URL location = Legerix.class.getProtectionDomain().getCodeSource().getLocation();
-        if (location == null) {
-            // No code source (some custom classloaders): librariesFor() already
-            // handled the canonical names, nothing more we can do.
-            return;
+    static final class Payload implements Closeable {
+        private final Path codeSource;
+        private final JarFile jar;
+
+        private Payload(final Path codeSource, final JarFile jar) {
+            this.codeSource = codeSource;
+            this.jar = jar;
         }
-        final Path codeSourcePath;
-        try {
-            codeSourcePath = Paths.get(location.toURI());
-        } catch (final URISyntaxException e) {
-            throw new IOException("Cannot resolve code source URL: " + location, e);
+
+        static Payload open() throws IOException {
+            final java.security.CodeSource cs = Legerix.class.getProtectionDomain().getCodeSource();
+            final URL location = cs == null ? null : cs.getLocation();
+            if (location == null) {
+                throw new IOException("Legerix: no code source for Legerix.class, so its own payload cannot be "
+                        + "identified. Legerix will not fall back to the class path: another artifact could "
+                        + "answer for its resources (Legerix#21).");
+            }
+            final Path path;
+            try {
+                path = Paths.get(location.toURI());
+            } catch (final URISyntaxException | IllegalArgumentException e) {
+                throw new IOException("Legerix: cannot resolve its own code source " + location
+                        + " to a readable file or directory", e);
+            }
+            if (Files.isDirectory(path)) {
+                return new Payload(path, null);
+            }
+            if (Files.isRegularFile(path)) {
+                return new Payload(path, new JarFile(path.toFile()));
+            }
+            throw new IOException("Legerix: its own code source " + path + " is neither a jar nor a directory");
         }
-        if (Files.isDirectory(codeSourcePath)) {
-            // Exploded classpath (dev/test from target/classes).
-            final Path dir = codeSourcePath.resolve(resourceDir);
-            if (!Files.isDirectory(dir)) return;
-            try (java.util.stream.Stream<Path> stream = Files.list(dir)) {
-                final java.util.Iterator<Path> it = stream.iterator();
-                while (it.hasNext()) {
-                    final Path entry = it.next();
-                    if (Files.isRegularFile(entry)) {
-                        final Path out = target.resolve(entry.getFileName());
-                        if (!Files.exists(out)) {
-                            Files.copy(entry, out, StandardCopyOption.REPLACE_EXISTING);
+
+        /**
+         * A payload rooted at a directory, for tests that need to describe a
+         * packaging Legerix must accept or refuse without building a jar.
+         */
+        static Payload ofDirectory(final Path root) {
+            return new Payload(root, null);
+        }
+
+        /** Where this payload was read from, for error messages. */
+        Path source() {
+            return codeSource;
+        }
+
+        boolean has(final String resource) {
+            if (jar == null) {
+                return Files.isRegularFile(codeSource.resolve(resource));
+            }
+            final JarEntry e = jar.getJarEntry(resource);
+            return e != null && !e.isDirectory();
+        }
+
+        InputStream open(final String resource) throws IOException {
+            if (jar == null) {
+                final Path f = codeSource.resolve(resource);
+                if (!Files.isRegularFile(f)) {
+                    throw new IOException("Legerix: " + resource + " is missing from " + codeSource);
+                }
+                return Files.newInputStream(f);
+            }
+            final JarEntry e = jar.getJarEntry(resource);
+            if (e == null || e.isDirectory()) {
+                throw new IOException("Legerix: " + resource + " is missing from " + codeSource);
+            }
+            return jar.getInputStream(e);
+        }
+
+        /** Immediate regular children of a directory of this payload. */
+        Set<String> children(final String resourceDir) throws IOException {
+            final Set<String> names = new LinkedHashSet<>();
+            if (jar == null) {
+                final Path dir = codeSource.resolve(resourceDir);
+                if (!Files.isDirectory(dir)) {
+                    return names;
+                }
+                try (java.util.stream.Stream<Path> stream = Files.list(dir)) {
+                    for (final java.util.Iterator<Path> it = stream.iterator(); it.hasNext(); ) {
+                        final Path entry = it.next();
+                        if (Files.isRegularFile(entry)) {
+                            names.add(entry.getFileName().toString());
                         }
                     }
                 }
+                return names;
             }
-            return;
-        }
-        // Packaged JAR, possibly somebody else's: extract only what the
-        // manifest names, among the entries actually present under the tier.
-        try (JarFile jar = new JarFile(codeSourcePath.toFile())) {
             final String prefix = resourceDir + "/";
-            final java.util.List<String> present = new java.util.ArrayList<>();
             final Enumeration<JarEntry> entries = jar.entries();
             while (entries.hasMoreElements()) {
-                final JarEntry je = entries.nextElement();
-                if (je.isDirectory()) continue;
-                final String name = je.getName();
+                final JarEntry e = entries.nextElement();
+                if (e.isDirectory()) continue;
+                final String name = e.getName();
                 if (!name.startsWith(prefix)) continue;
                 final String tail = name.substring(prefix.length());
-                // Only immediate children, no nested subdirs.
-                if (tail.isEmpty() || tail.contains("/")) continue;
-                present.add(tail);
+                if (tail.isEmpty() || tail.indexOf('/') >= 0) continue;
+                names.add(tail);
             }
-            final JarEntry manifestEntry = jar.getJarEntry(prefix + NATIVES_MANIFEST);
-            String manifest = null;
-            if (manifestEntry != null) {
-                try (InputStream in = jar.getInputStream(manifestEntry)) {
-                    manifest = new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            return names;
+        }
+
+        List<String> readLines(final String resource) throws IOException {
+            final List<String> lines = new ArrayList<>();
+            try (BufferedReader r = new BufferedReader(
+                    new InputStreamReader(open(resource), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = r.readLine()) != null) {
+                    lines.add(line);
                 }
             }
-            final java.util.List<String> wanted = filesToExtract(present, manifest);
-            if (manifest == null) {
-                logger.log(Level.WARNING, "No {0} under {1} in {2}: only the canonical tesseract/leptonica pair "
-                        + "is extracted; other natives Legerix may ship for this tier are left in the jar",
-                        new Object[]{NATIVES_MANIFEST, resourceDir, codeSourcePath});
+            return lines;
+        }
+
+        Properties readProperties(final String resource) throws IOException {
+            final Properties props = new Properties();
+            try (InputStream in = open(resource)) {
+                props.load(new InputStreamReader(in, StandardCharsets.UTF_8));
             }
-            for (final String tail : wanted) {
-                extractIfMissing(prefix + tail, target.resolve(tail));
+            return props;
+        }
+
+        void extract(final String resource, final Path target) throws IOException {
+            try (InputStream in = open(resource)) {
+                Files.copy(in, target, StandardCopyOption.REPLACE_EXISTING);
+            }
+        }
+
+        @Override
+        public void close() throws IOException {
+            if (jar != null) {
+                jar.close();
             }
         }
     }
 
     /**
-     * The files to extract for a tier, given the entries present under the
-     * tier directory of the jar and the content of that tier's
-     * {@link #NATIVES_MANIFEST}: the manifest's entries, in manifest order,
-     * restricted to those actually present. A {@code null} manifest yields
-     * nothing: without it there is no way to tell Legerix's files from a
-     * co-bundling consumer's (Legerix#21). Blank lines and lines starting
-     * with {@code #} in the manifest are ignored.
+     * The files this payload declares for a tier, in manifest order, after
+     * checking the contract. The manifest is not a hint: a packaging that is
+     * incomplete or ambiguous is refused before anything is loaded, rather
+     * than loading whatever happens to be there and hoping it is enough.
+     *
+     * <ul>
+     *   <li>no manifest for the tier: error;</li>
+     *   <li>a declared file absent from the payload: error;</li>
+     *   <li>the canonical tesseract/leptonica pair not declared: error;</li>
+     *   <li>a name that is not a plain file name, or declared twice: error;</li>
+     *   <li>no fallback to the generic top-level directories of older
+     *       layouts, ever.</li>
+     * </ul>
+     *
+     * <p>A foreign native sitting elsewhere in the jar, a consumer's OpenCV
+     * under its own {@code linux-x86-64/} for instance, is not an error and
+     * not our business: it is simply never named here.
      */
-    static java.util.List<String> filesToExtract(final java.util.Collection<String> present, final String manifest) {
-        final java.util.List<String> out = new java.util.ArrayList<>();
-        if (manifest == null) {
-            return out;
+    static List<String> declaredNatives(final Payload payload, final String tierDir, final OS os)
+            throws IOException {
+        final String manifestResource = tierDir + "/" + NATIVES_MANIFEST;
+        if (!payload.has(manifestResource)) {
+            throw new IOException("Legerix: no " + manifestResource + " in " + payload.source()
+                    + ". This payload does not declare what it ships for this platform, so nothing is "
+                    + "extracted: without the manifest there is no way to tell Legerix's files from a "
+                    + "co-bundling consumer's (Legerix#21). Rebuild with scripts/write-natives-manifest.sh.");
         }
-        final java.util.Set<String> available = new java.util.HashSet<>(present);
-        for (final String raw : manifest.split("\\R")) {
-            final String line = raw.trim();
-            if (line.isEmpty() || line.startsWith("#") || line.equals(NATIVES_MANIFEST)) continue;
-            if (available.contains(line) && !out.contains(line)) {
-                out.add(line);
+        final Set<String> present = payload.children(tierDir);
+        final List<String> declared = new ArrayList<>();
+        for (final String raw : payload.readLines(manifestResource)) {
+            final String name = raw.trim();
+            if (name.isEmpty() || name.startsWith("#")) continue;
+            if (name.indexOf('/') >= 0 || name.indexOf('\\') >= 0 || name.indexOf(':') >= 0
+                    || name.startsWith(".") || name.equals(NATIVES_MANIFEST)) {
+                throw new IOException("Legerix: " + manifestResource + " in " + payload.source()
+                        + " declares an invalid entry: '" + name + "'. Entries are plain file names of that "
+                        + "tier directory.");
+            }
+            if (declared.contains(name)) {
+                throw new IOException("Legerix: " + manifestResource + " in " + payload.source()
+                        + " declares '" + name + "' twice.");
+            }
+            if (!present.contains(name)) {
+                throw new IOException("Legerix: " + manifestResource + " in " + payload.source()
+                        + " declares '" + name + "' but " + tierDir + " does not contain it. The payload is "
+                        + "incomplete; Legerix refuses to load a partial platform rather than fail later on a "
+                        + "missing dependency.");
+            }
+            declared.add(name);
+        }
+        for (final String canonical : librariesFor(os)) {
+            if (!declared.contains(canonical)) {
+                throw new IOException("Legerix: " + manifestResource + " in " + payload.source()
+                        + " does not declare " + canonical + ", which this platform cannot run without.");
             }
         }
-        return out;
+        return declared;
+    }
+
+    /**
+     * Marks an extraction directory as in use by this JVM, for the life of
+     * the JVM. A later run finds the lock taken and leaves the directory
+     * alone; when the JVM is gone the lock is released by the OS and the
+     * directory becomes reapable. Nothing here deletes anything.
+     */
+    private static void claim(final Path dir) throws IOException {
+        final Path lock = dir.resolve(LOCK_FILE);
+        lockChannel = FileChannel.open(lock, StandardOpenOption.CREATE, StandardOpenOption.WRITE);
+        ownLock = lockChannel.lock();
+    }
+
+    /**
+     * Deletes extraction directories of this same Legerix version that no
+     * live JVM holds. A directory whose lock cannot be taken belongs to a
+     * running JVM and is left untouched; a deletion that fails, the normal
+     * case on Windows where a loaded DLL stays mapped, is skipped silently
+     * and retried by a later run. Best effort by design: what matters here
+     * is never removing what someone may still be using, not always freeing
+     * the disk.
+     */
+    private static void reapAbandonedExtractions(final Path versionRoot, final Path keep) {
+        final List<Path> candidates = new ArrayList<>();
+        try (java.util.stream.Stream<Path> stream = Files.list(versionRoot)) {
+            for (final java.util.Iterator<Path> it = stream.iterator(); it.hasNext(); ) {
+                final Path dir = it.next();
+                if (Files.isDirectory(dir) && !dir.equals(keep) && Files.exists(dir.resolve(LOCK_FILE))) {
+                    candidates.add(dir);
+                }
+            }
+        } catch (final IOException e) {
+            logger.log(Level.FINE, "Legerix: cannot list {0} to reap old extractions", versionRoot);
+            return;
+        }
+        for (final Path dir : candidates) {
+            boolean abandoned = false;
+            try (FileChannel ch = FileChannel.open(dir.resolve(LOCK_FILE), StandardOpenOption.WRITE)) {
+                final FileLock probe = ch.tryLock();
+                if (probe != null) {
+                    probe.release();
+                    abandoned = true;
+                }
+            } catch (final IOException | RuntimeException e) {
+                continue;
+            }
+            if (abandoned) {
+                deleteQuietly(dir);
+            }
+        }
+    }
+
+    private static void deleteQuietly(final Path dir) {
+        try {
+            Files.walkFileTree(dir, new SimpleFileVisitor<Path>() {
+                @Override
+                public FileVisitResult visitFile(final Path file, final BasicFileAttributes attrs) {
+                    try {
+                        Files.deleteIfExists(file);
+                    } catch (final IOException ignored) {
+                        // Locked native on Windows: leave it, a later run retries.
+                    }
+                    return FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public FileVisitResult postVisitDirectory(final Path d, final IOException exc) {
+                    try {
+                        Files.deleteIfExists(d);
+                    } catch (final IOException ignored) {
+                        // Not empty because a file above could not be deleted.
+                    }
+                    return FileVisitResult.CONTINUE;
+                }
+            });
+        } catch (final IOException e) {
+            logger.log(Level.FINE, "Legerix: could not reap {0}", dir);
+        }
     }
 
     // dlopen(3) flags used to force RTLD_GLOBAL on Linux — see loadBundledLib.
@@ -825,7 +1060,11 @@ public final class Legerix {
      */
     private static void assertBundledTesseract(final String absoluteTesseractPath) {
         final String actual = getLoadedTesseractVersion(absoluteTesseractPath);
-        final String bundled = getTesseractVersion();
+        // The field, never getTesseractVersion(): the public getter calls
+        // ensureLoaded(), and at this point loadNatives() has not set the
+        // loaded flag yet, so the getter would re-enter loadNatives() through
+        // the reentrant class monitor and recurse until the disk fills.
+        final String bundled = tesseractVersion;
         final String actualMM = majorMinor(actual);
         final String bundledMM = majorMinor(bundled);
         if (actualMM == null || !actualMM.equals(bundledMM)) {
