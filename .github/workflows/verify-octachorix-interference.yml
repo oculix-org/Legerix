@@ -1,4 +1,5 @@
-name: Octachorix theorem (#20) — fresh natives, Linux modern + legacy + macOS Intel
+name: Bundled Tesseract control
+run-name: Bundled Tesseract control · ${{ github.ref_name }}
 
 # Builds Leptonica + Tesseract from source on three runners, exactly as
 # build.yml does (the build jobs below are build.yml's, copied verbatim,

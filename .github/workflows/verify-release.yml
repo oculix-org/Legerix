@@ -1,4 +1,5 @@
-name: Verify Release (dry-run)
+name: Check a release
+run-name: Check a release · ${{ github.ref_name }}
 # Same payload staging as publish-maven-central.yml but stops at `mvn verify`.
 # Validates that compile + bundle + sources + javadoc + GPG signing all pass
 # without actually deploying to Maven Central. Safe to run as many times as

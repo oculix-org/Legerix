@@ -1,4 +1,5 @@
-name: Probe — macOS Intel build (hand-run, ships nothing)
+name: Intel Mac build check
+run-name: Intel Mac build check · ${{ github.ref_name }}
 
 # The build_macos_x64 job of build.yml, copied verbatim, with one change:
 # runs-on macos-15-intel instead of macos-latest. build.yml's comment

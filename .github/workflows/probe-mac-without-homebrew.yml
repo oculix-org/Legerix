@@ -1,4 +1,5 @@
-name: Mac without Homebrew — raw dyld message
+name: Mac without Homebrew
+run-name: Mac without Homebrew · ${{ github.ref_name }}
 
 # What a user with a bare Mac actually sees when the codecs are missing.
 #
