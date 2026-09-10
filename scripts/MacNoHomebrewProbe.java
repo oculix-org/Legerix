@@ -18,13 +18,24 @@ import io.github.julienmerconsulting.legerix.Legerix;
  */
 public class MacNoHomebrewProbe {
 
+    /**
+     * The sentence a user has to type, spelled out rather than read back from
+     * {@code Legerix.MACOS_HOMEBREW_FORMULAE}. A probe that imports its own
+     * expectation from the class under test keeps passing when that value is
+     * wrong: it asserts that the message contains whatever the class currently
+     * says, not what a user needs. The in-package unit test may read the
+     * constant; this one checks what a real Mac shows a real person.
+     */
+    private static final String EXPECTED =
+            "brew install jpeg-turbo libpng libtiff webp zstd xz libdeflate";
+
     public static void main(String[] args) throws Exception {
         try {
             Legerix.loadNatives();
         } catch (UnsatisfiedLinkError e) {
             System.out.println("UnsatisfiedLinkError as expected:");
             System.out.println(e.getMessage());
-            if (e.getMessage() != null && e.getMessage().contains("brew install " + Legerix.MACOS_HOMEBREW_FORMULAE)) {
+            if (e.getMessage() != null && e.getMessage().contains(EXPECTED)) {
                 System.out.println("OK: the failure names Homebrew and the formulae to install");
                 return;
             }
