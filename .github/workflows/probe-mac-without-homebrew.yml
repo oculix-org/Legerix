@@ -64,6 +64,10 @@ jobs:
       - name: Placeholders for the other tiers, manifest, traineddata
         run: |
           N=src/main/resources/META-INF/legerix/natives
+          # Git tracks no empty directory, and unlike the job this step was
+          # copied from, nothing here has downloaded an artifact that creates
+          # the tree. So the tiers have to be made before they can be filled.
+          mkdir -p $N/linux-x86-64 $N/linux-aarch64 $N/darwin-aarch64 $N/win32-x86-64
           : > $N/linux-x86-64/libtesseract.so.5
           : > $N/linux-aarch64/libtesseract.so.5
           : > $N/darwin-aarch64/libtesseract.5.dylib
