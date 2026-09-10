@@ -1,4 +1,5 @@
-name: Verify natives cross-platform matrix (#20 RC6)
+name: Natives load on every OS
+run-name: Natives load on every OS · ${{ github.ref_name }}
 
 # Répond à la Q5 (RC6) de David Young dans le retest report de Legerix#20 :
 # "the matrix is the whole point: runners with and without a system Tesseract.
