@@ -1,0 +1,158 @@
+name: Mac without Homebrew — raw dyld message
+
+# What a user with a bare Mac actually sees when the codecs are missing.
+#
+# The job in verify-octachorix-interference.yml removes the seven formulae with
+# `brew uninstall` and leaves Homebrew itself in place. David Young's objection
+# in #22 is that this proves the message maps four literal strings correctly,
+# not that those are the strings dyld emits on a machine that never had brew.
+# So here Homebrew is removed with its own uninstaller, and the job refuses to
+# go further until it has checked that nothing is left behind.
+#
+# It touches no source file. The probe is written inline below rather than
+# taken from scripts/, so this workflow runs on the tree as it stands.
+#
+# Diagnostic, not a gate: workflow_dispatch only. It reads its natives from a
+# published release, so it builds nothing and needs no brew of its own.
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release to take the darwin natives from (blank = the pom version)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: macOS Intel, Homebrew fully uninstalled
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      # Never typed in: a hardcoded tag here would keep testing an old payload
+      # while the code moves on.
+      - name: Resolve the release tag
+        run: |
+          TAG="${{ github.event.inputs.release_tag }}"
+          if [ -z "$TAG" ]; then
+            TAG="v$(mvn -B -q help:evaluate -Dexpression=project.version -DforceStdout)"
+          fi
+          echo "RELEASE_TAG=$TAG" >> $GITHUB_ENV
+          echo "natives taken from $TAG"
+
+      - name: Stage the darwin Intel natives from the release
+        run: |
+          D=src/main/resources/META-INF/legerix/natives/darwin
+          mkdir -p "$D"
+          BASE=https://github.com/oculix-org/Legerix/releases/download/${RELEASE_TAG}
+          curl -fsSL -o "$D/libtesseract.5.dylib" "$BASE/libtesseract.5-darwin.dylib"
+          curl -fsSL -o "$D/libleptonica.6.dylib" "$BASE/libleptonica.6-darwin.dylib"
+          # Unversioned symlinks, load-bearing per 00bad35
+          ln -sf libtesseract.5.dylib "$D/libtesseract.dylib"
+          ln -sf libleptonica.6.dylib "$D/libleptonica.dylib"
+          ls -la "$D"
+
+      - name: Placeholders for the other tiers, manifest, traineddata
+        run: |
+          N=src/main/resources/META-INF/legerix/natives
+          : > $N/linux-x86-64/libtesseract.so.5
+          : > $N/linux-aarch64/libtesseract.so.5
+          : > $N/darwin-aarch64/libtesseract.5.dylib
+          : > $N/win32-x86-64/tesseract55.dll
+          LEGERIX_TIERS=darwin bash ./scripts/write-natives-manifest.sh "$N"
+          bash ./scripts/fetch-traineddata.sh src/main/resources/META-INF/legerix/tessdata
+
+      # Packaged while brew is still around, so nothing in the build can be
+      # blamed for the uninstall.
+      - name: Package
+        run: mvn -B -q package -DskipTests
+
+      - name: What the natives link against, before anything is removed
+        run: |
+          otool -L src/main/resources/META-INF/legerix/natives/darwin/libleptonica.6.dylib
+          echo "--- formulae present ---"
+          brew list --formula 2>/dev/null | tr '\n' ' ' || echo "(brew already absent)"
+
+      - name: Uninstall Homebrew with its own uninstaller
+        run: |
+          NONINTERACTIVE=1 /bin/bash -c \
+            "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/uninstall.sh)" -- --force
+          echo "uninstaller finished with $?"
+
+      # The precondition is the whole point. If a codec survives, the load may
+      # succeed and the probe would report a green that means nothing.
+      - name: Check the machine really has no Homebrew and no codecs
+        run: |
+          FAIL=0
+          if command -v brew >/dev/null 2>&1; then
+            echo "::error::brew is still on PATH at $(command -v brew)"; FAIL=1
+          fi
+          for d in /usr/local/opt /usr/local/Cellar /usr/local/Homebrew /opt/homebrew; do
+            [ -e "$d" ] && { echo "::error::$d still exists"; ls "$d" | head; FAIL=1; }
+          done
+          LEFT=$(ls /usr/local/lib/libjpeg*.dylib /usr/local/lib/libpng*.dylib \
+                    /usr/local/lib/libtiff*.dylib /usr/local/lib/libwebp*.dylib \
+                    /usr/local/lib/liblzma*.dylib /usr/local/lib/libzstd*.dylib \
+                    /usr/local/lib/libdeflate*.dylib 2>/dev/null || true)
+          if [ -n "$LEFT" ]; then
+            echo "::error::codecs still reachable, the probe would prove nothing:"
+            echo "$LEFT"; FAIL=1
+          fi
+          [ "$FAIL" -eq 0 ] || exit 1
+          echo "no brew, no leftover codecs — the precondition holds"
+
+      - name: Load from the jar and print the raw message
+        run: |
+          JAR=$(ls target/legerix-*.jar | grep -v -- '-sources\|-javadoc' | head -1)
+          JNA=$(mvn -B -q dependency:build-classpath -DincludeArtifactIds=jna -Dmdep.outputFile=/dev/stdout)
+          rm -rf ~/.cache/legerix/$(mvn -B -q help:evaluate -Dexpression=project.version -DforceStdout)
+
+          # Written here rather than taken from scripts/ so this workflow needs
+          # no change to the tree. The expected sentence is spelled out on
+          # purpose: a probe that imports it from the class under test stays
+          # green when that value is wrong.
+          mkdir -p /tmp/probe && cat > /tmp/probe/RawMessageProbe.java <<'JAVA'
+          import io.github.julienmerconsulting.legerix.Legerix;
+
+          public class RawMessageProbe {
+              private static final String EXPECTED =
+                  "brew install jpeg-turbo libpng libtiff webp zstd xz libdeflate";
+
+              public static void main(String[] args) {
+                  try {
+                      Legerix.loadNatives();
+                  } catch (Throwable t) {
+                      System.out.println("=== raw message, verbatim ===");
+                      System.out.println(t.getClass().getName());
+                      System.out.println(t.getMessage());
+                      Throwable c = t.getCause();
+                      while (c != null) {
+                          System.out.println("--- caused by " + c.getClass().getName());
+                          System.out.println(c.getMessage());
+                          c = c.getCause();
+                      }
+                      System.out.println("=== end ===");
+                      String m = String.valueOf(t.getMessage());
+                      if (m.contains(EXPECTED)) {
+                          System.out.println("OK: the message carries \"" + EXPECTED + "\"");
+                          return;
+                      }
+                      System.out.println("FAIL: the message does not carry \"" + EXPECTED + "\"");
+                      System.exit(1);
+                  }
+                  System.out.println("NOT EXERCISED: the natives loaded on a Mac with no Homebrew; "
+                          + "the codecs came from somewhere else and the precondition check missed it");
+                  System.exit(3);
+              }
+          }
+          JAVA
+          java -cp "$JAR:$JNA" /tmp/probe/RawMessageProbe.java
