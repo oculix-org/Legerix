@@ -77,8 +77,20 @@ jobs:
 
       # Packaged while brew is still around, so nothing in the build can be
       # blamed for the uninstall.
-      - name: Package
-        run: mvn -B -q package -DskipTests
+      # After the uninstall the probe runs the way David Young would run it on
+      # his own bare Mac: a JVM and two jars, nothing else. So JNA is fetched
+      # straight from Central rather than resolved through Maven, whose mvn on
+      # these runners comes from Homebrew and leaves with it.
+      - name: Package and fetch JNA
+        run: |
+          mvn -B -q package -DskipTests
+          JNA_VERSION=$(grep -A2 '<artifactId>jna</artifactId>' pom.xml \
+                        | grep -m1 '<version>' | sed 's/.*<version>\(.*\)<\/version>.*/\1/')
+          [ -n "$JNA_VERSION" ] || { echo "::error::JNA version not found in pom.xml"; exit 1; }
+          curl -fsSL -o /tmp/jna.jar \
+            "https://repo1.maven.org/maven2/net/java/dev/jna/jna/${JNA_VERSION}/jna-${JNA_VERSION}.jar"
+          ls -l /tmp/jna.jar
+          echo "LEGERIX_VERSION=$(mvn -B -q help:evaluate -Dexpression=project.version -DforceStdout)" >> $GITHUB_ENV
 
       - name: What the natives link against, before anything is removed
         run: |
@@ -114,43 +126,65 @@ jobs:
           [ "$FAIL" -eq 0 ] || exit 1
           echo "no brew, no leftover codecs — the precondition holds"
 
-      - name: Load from the jar and print the raw message
+      # The question from #22, verbatim: the unit test proves macOsHomebrewAdvice
+      # maps its literals correctly; only a genuinely codec-less Mac proves
+      # those are the strings dyld actually emits. So this step captures the
+      # raw dyld text and confronts each literal with it, one by one. The
+      # output sentence is not what is being verified here.
+      - name: Confront the six literals with what dyld really says
         run: |
+          # A JVM and two jars, nothing else. java comes from the tool cache,
+          # not from /usr/local, so the uninstall left it alone.
           JAR=$(ls target/legerix-*.jar | grep -v -- '-sources\|-javadoc' | head -1)
-          JNA=$(mvn -B -q dependency:build-classpath -DincludeArtifactIds=jna -Dmdep.outputFile=/dev/stdout)
-          rm -rf ~/.cache/legerix/$(mvn -B -q help:evaluate -Dexpression=project.version -DforceStdout)
+          JNA=/tmp/jna.jar
+          echo "jar: $JAR"
+          echo "jna: $JNA"
+          rm -rf ~/.cache/legerix/"$LEGERIX_VERSION"
 
           # Written here rather than taken from scripts/ so this workflow needs
-          # no change to the tree. The expected sentence is spelled out on
-          # purpose: a probe that imports it from the class under test stays
-          # green when that value is wrong.
-          mkdir -p /tmp/probe && cat > /tmp/probe/RawMessageProbe.java <<'JAVA'
+          # no change to the tree. The six literals are copied from
+          # macOsHomebrewAdvice by hand, on purpose: reading them back from the
+          # class would make this green whatever they say.
+          mkdir -p /tmp/probe && cat > /tmp/probe/DyldLiteralsProbe.java <<'JAVA'
           import io.github.julienmerconsulting.legerix.Legerix;
 
-          public class RawMessageProbe {
-              private static final String EXPECTED =
-                  "brew install jpeg-turbo libpng libtiff webp zstd xz libdeflate";
+          public class DyldLiteralsProbe {
+              // macOsHomebrewAdvice fires only if one PATH and one ERROR literal both match.
+              static final String[] PATHS  = { "/opt/homebrew/", "/usr/local/opt/", "/usr/local/lib/" };
+              static final String[] ERRORS = { "Library not loaded", "image not found", "no such file" };
 
               public static void main(String[] args) {
                   try {
                       Legerix.loadNatives();
                   } catch (Throwable t) {
-                      System.out.println("=== raw message, verbatim ===");
-                      System.out.println(t.getClass().getName());
-                      System.out.println(t.getMessage());
-                      Throwable c = t.getCause();
-                      while (c != null) {
-                          System.out.println("--- caused by " + c.getClass().getName());
-                          System.out.println(c.getMessage());
-                          c = c.getCause();
-                      }
+                      // When the advice fires, Legerix wraps the original error and keeps
+                      // it as the cause. When it does not, the original is rethrown as is.
+                      // Either way the raw dyld text is the innermost message.
+                      Throwable inner = t;
+                      while (inner.getCause() != null) inner = inner.getCause();
+                      String raw = String.valueOf(inner.getMessage());
+                      boolean adviceFired = inner != t;
+
+                      System.out.println("=== raw dyld text, verbatim ===");
+                      System.out.println(raw);
                       System.out.println("=== end ===");
-                      String m = String.valueOf(t.getMessage());
-                      if (m.contains(EXPECTED)) {
-                          System.out.println("OK: the message carries \"" + EXPECTED + "\"");
+                      System.out.println();
+                      System.out.println("literal by literal:");
+                      boolean pathHit = false, errHit = false;
+                      for (String p : PATHS)  { boolean h = raw.contains(p); pathHit |= h; System.out.printf("  path  %-22s %s%n", "\"" + p + "\"", h ? "PRESENT" : "absent"); }
+                      for (String e : ERRORS) { boolean h = raw.contains(e); errHit  |= h; System.out.printf("  error %-22s %s%n", "\"" + e + "\"", h ? "PRESENT" : "absent"); }
+                      System.out.println();
+
+                      if (adviceFired) {
+                          System.out.println("advice FIRED: a path literal and an error literal both matched the real text.");
+                          System.out.println("what the user sees:");
+                          System.out.println(t.getMessage());
                           return;
                       }
-                      System.out.println("FAIL: the message does not carry \"" + EXPECTED + "\"");
+                      System.out.println("advice did NOT fire: the user gets the raw dyld text with no instruction.");
+                      if (!pathHit) System.out.println("  none of the three path literals is in what dyld said");
+                      if (!errHit)  System.out.println("  none of the three error literals is in what dyld said");
+                      System.out.println("  => the unit test is green on fiction; the literals in Legerix.java need the text above");
                       System.exit(1);
                   }
                   System.out.println("NOT EXERCISED: the natives loaded on a Mac with no Homebrew; "
@@ -159,4 +193,4 @@ jobs:
               }
           }
           JAVA
-          java -cp "$JAR:$JNA" /tmp/probe/RawMessageProbe.java
+          java -cp "$JAR:$JNA" /tmp/probe/DyldLiteralsProbe.java
