@@ -269,9 +269,10 @@ public class LegerixSmokeTest {
         final String actual = Legerix.getLoadedTesseractVersion(tesseract.toString());
         final String bundled = Legerix.getTesseractVersion();
         assertNotNull("TessVersion() returned null — libtesseract may not be loaded", actual);
-        // MAJOR.MINOR comparison: Windows vcpkg ships 5.5.2, Linux/mac from-source 5.5.0.
-        // Both are legitimate 5.5.x. Path identity is guaranteed by using the absolute
-        // path of the file we extracted — see Legerix.getLoadedTesseractVersion javadoc.
+        // MAJOR.MINOR comparison: the Windows tier follows vcpkg, the Unix tiers
+        // follow the pom, and a patch of difference between the two is legitimate
+        // between two bumps. Path identity is guaranteed by the absolute path of
+        // the file we extracted, see Legerix.getLoadedTesseractVersion.
         final String[] a = actual.split("\\.");
         final String[] b = bundled.split("\\.");
         assertTrue(
