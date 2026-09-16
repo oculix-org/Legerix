@@ -279,47 +279,13 @@ public final class Legerix {
 
         final Path target = extractionDir;
 
-        // Best-effort hints for a consumer that would still resolve
-        // tesseract/leptonica by SHORT NAME through JNA. The supported
-        // contract is not this: it is getTesseractLibraryPath() and
-        // getLeptonicaLibraryPath(), absolute paths, which Octachorix binds
-        // without any lookup. tess4j, the short-name consumer these hints
-        // were written for, is refused above. They stay for any other code
-        // calling Native.load("tesseract", ...), and they are hints only.
-        //
-        // How JNA 5.14.0 really resolves a short name, as measured and
-        // corrected by David Young on Legerix#20 (§3 of his report of
-        // 2026-09-04), replacing the mechanism this comment used to cite:
-        //
-        //   1. Two exact-name attempts first: "libtesseract.so" (unversioned)
-        //      in each search directory, jna.library.path included. If the
-        //      file exists and dlopen succeeds, resolution ends there and no
-        //      ranking ever happens. Directory order was never the problem:
-        //      tess4j APPENDS to jna.library.path, ours stays first.
-        //
-        //   2. Only if both exact-name attempts fail, matchLibrary() runs as a
-        //      catch-block fallback. Its filter ANDs isVersionedName(), so an
-        //      unversioned file is not in its pool at all, and among the
-        //      versioned candidates of ALL directories the highest parsed
-        //      version wins: a system libtesseract.so.5.0.3 beats our
-        //      libtesseract.so.5 whatever directory comes first.
-        //
-        // Our August reading, "an unversioned .so loses because no-version
-        // parses lowest", was wrong: it never competes, it is excluded. What
-        // actually failed in August was step 1 itself: the exact-name attempt
-        // FOUND the unversioned symlink of the -8 payload and dlopen failed,
-        // because that payload's RUNPATH was the corrupted literal 'RIGIN' and
-        // the sibling leptonica was unreachable. A load failure read as a
-        // ranking loss. With the $ORIGIN RUNPATH fixed, an unversioned alias
-        // present in the extraction directory does resolve at step 1; when it
-        // is absent, which depends on the publish channel, step 2 hands the
-        // consumer the system library. Hence the getters above: name the
-        // file, do not look it up.
-        //
-        // NEITHER mechanism affects Legerix.loadNatives() itself: the
-        // System.load() calls below use absolute paths and bypass all short-
-        // name resolution, and assertBundledTesseract() below uses
-        // NativeLibrary.getInstance(absolute) for the same reason.
+        // Hints for a consumer that would still resolve tesseract or leptonica
+        // by short name through JNA. The supported contract is not this: it is
+        // getTesseractLibraryPath() and getLeptonicaLibraryPath(), absolute
+        // paths, which Octachorix binds without any lookup. Nothing here
+        // affects loadNatives() itself: the System.load() calls below and
+        // assertBundledTesseract() use absolute paths and bypass every
+        // short-name resolution.
         final String ours = target.toAbsolutePath().toString();
         NativeLibrary.addSearchPath("tesseract", ours);
         NativeLibrary.addSearchPath("leptonica", ours);
@@ -401,8 +367,7 @@ public final class Legerix {
      *
      * <p>This is the file to hand to a binding that loads by absolute path
      * (Octachorix). Do not list the extraction directory and pick a file by
-     * name pattern: the names differ per platform, aliases may or may not be
-     * present depending on the publish channel, and Legerix already knows
+     * name pattern: the names differ per platform and Legerix already knows
      * exactly which file it loaded.
      *
      * @return the absolute path of the loaded {@code libtesseract}
