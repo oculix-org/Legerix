@@ -84,9 +84,6 @@ jobs:
             https://github.com/oculix-org/Legerix/releases/download/${RELEASE_TAG}/libtesseract.5-darwin-aarch64.dylib
           curl -sSL -o libleptonica.6.dylib \
             https://github.com/oculix-org/Legerix/releases/download/${RELEASE_TAG}/libleptonica.6-darwin-aarch64.dylib
-          # Unversioned symlinks (load-bearing per commit 00bad35)
-          ln -sf libtesseract.5.dylib libtesseract.dylib
-          ln -sf libleptonica.6.dylib libleptonica.dylib
           ls -la
 
       - name: Stage Windows natives from release
