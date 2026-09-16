@@ -4,9 +4,9 @@ Tesseract + Leptonica natives bundled as a cross-platform Maven artifact, with
 a thin Java loader. From Latin _legere_, "to read".
 
 Modeled on [Apertix](https://github.com/julienmerconsulting/Apertix), which
-does the same thing for OpenCV. Legerix solves the equivalent problem for
-[tess4j](https://github.com/nguyenq/tess4j) consumers: ship the matching
-Tesseract version with the application instead of relying on a system-wide
+does the same thing for OpenCV. Legerix solves the equivalent problem for JVM
+OCR bindings, [Octachorix](https://github.com/oculix-org/Octachorix) first:
+ship the matching Tesseract version with the application instead of relying on a system-wide
 `apt install tesseract-ocr`, which on Ubuntu 24.04 ships `libtesseract.so.5.0.3`
 (Tesseract 5.3.4) and is missing the `TessBaseAPIGetPAGEText` symbol introduced
 in 5.5.x.
@@ -17,7 +17,7 @@ in 5.5.x.
 <dependency>
     <groupId>io.github.oculix-org</groupId>
     <artifactId>legerix</artifactId>
-    <version>5.5.0-1</version>
+    <version>5.5.2-1</version>
 </dependency>
 ```
 
@@ -96,8 +96,9 @@ brew install jpeg-turbo libpng libtiff webp zstd xz libdeflate
 
 If they are missing, `Legerix.loadNatives()` fails with an
 `UnsatisfiedLinkError` whose message says exactly this, with the `brew install`
-line to run, before the raw dyld text. Linux and Windows need nothing: their
-tiers carry or link their codecs themselves.
+line to run, before the raw dyld text. Linux needs nothing: its tiers link
+their codecs statically. Windows needs nothing either: its tier carries the
+vcpkg DLLs.
 
 ## Public API
 
@@ -166,11 +167,13 @@ Available programmatically via `Legerix.BUNDLED_LANGUAGES`.
 ### Using a bundled language
 
 ```java
-Legerix.loadNatives();
-ITesseract tess = new Tesseract();
-tess.setDatapath(Legerix.getTessdataPath().toString());
-tess.setLanguage("fra");                 // or "eng+fra" for combined
-String text = tess.doOCR(image);
+Scribe fra = Scribe.builder()
+        .tesseractLibrary(Legerix.getTesseractLibraryPath())
+        .leptonicaLibrary(Legerix.getLeptonicaLibraryPath())
+        .datapath(Legerix.getTessdataPath())
+        .language("fra")                 // or "eng+fra" for combined
+        .build();
+Scribe eng = fra.withLanguage("eng");    // same natives, its own session
 ```
 
 ### Adding more languages
@@ -184,24 +187,29 @@ keep using it as the datapath:
 Path tessdata = Legerix.getTessdataPath();
 // On first run: download deu.traineddata into tessdata.resolve("deu.traineddata").
 // (Get it from https://github.com/tesseract-ocr/tessdata_fast or tessdata_best.)
-ITesseract tess = new Tesseract();
-tess.setDatapath(tessdata.toString());
-tess.setLanguage("deu");
+Scribe deu = Scribe.builder()
+        .tesseractLibrary(Legerix.getTesseractLibraryPath())
+        .leptonicaLibrary(Legerix.getLeptonicaLibraryPath())
+        .datapath(tessdata)
+        .language("deu")
+        .build();
 ```
 
 The cache directory is writable and persistent, keyed on the full Legerix
 version so a build-suffix bump invalidates stale extracted natives
-(`~/.cache/legerix/5.5.0-4/tessdata/` on Linux,
-`%LOCALAPPDATA%\legerix\5.5.0-4\tessdata\` on Windows).
+(`~/.cache/legerix/5.5.2-1/<tier>-<run>/tessdata/` on Linux,
+`%LOCALAPPDATA%\legerix\5.5.2-1\<tier>-<run>\tessdata\` on Windows).
 
-Alternatively, point tess4j at a completely separate `tessdata` folder you
-control:
+Alternatively, point the session at a completely separate `tessdata` folder
+you control:
 
 ```java
-Legerix.loadNatives();
-ITesseract tess = new Tesseract();
-tess.setDatapath("/opt/myapp/tessdata");
-tess.setLanguage("ara");
+Scribe ara = Scribe.builder()
+        .tesseractLibrary(Legerix.getTesseractLibraryPath())
+        .leptonicaLibrary(Legerix.getLeptonicaLibraryPath())
+        .datapath(Path.of("/opt/myapp/tessdata"))
+        .language("ara")
+        .build();
 ```
 
 A future release may add a helper like `Legerix.installLanguage("deu")`
@@ -219,20 +227,13 @@ For non-Linux platforms the tier is reported as `"n/a"`.
 ## Building locally
 
 The natives are produced by GitHub Actions (`.github/workflows/build.yml`,
-7-job matrix). Reproducing locally just for one platform:
+7-job matrix). Reproducing locally just for one platform, Linux or macOS:
 
 ```bash
-NATIVES=src/main/resources/META-INF/legerix/natives
-PREFIX="$PWD/_prefix"
-mkdir -p "$PREFIX"
-./scripts/build-leptonica.sh 1.87.0 "$PREFIX"
-./scripts/build-tesseract.sh 5.5.2  "$PREFIX"
-./scripts/fetch-traineddata.sh
-
-# Stage, declare what this tier ships, package
-mkdir -p "$NATIVES/linux-x86-64"
-cp -L "$PREFIX/lib/libleptonica.so.6" "$NATIVES/linux-x86-64/"
-cp -L "$PREFIX/lib/libtesseract.so.5" "$NATIVES/linux-x86-64/"
+# Builds the codecs, Leptonica and Tesseract from source, links the codecs
+# statically on Linux, stages the two libraries of this host's tier under
+# src/main/resources/META-INF/legerix/natives/<tier>/ and fetches tessdata.
+./scripts/build-self-contained-local.sh
 LEGERIX_ALLOW_EMPTY_TIERS=1 ./scripts/write-natives-manifest.sh
 mvn -B install
 ```
