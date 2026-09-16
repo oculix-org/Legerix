@@ -57,9 +57,6 @@ jobs:
           BASE=https://github.com/oculix-org/Legerix/releases/download/${RELEASE_TAG}
           curl -fsSL -o "$D/libtesseract.5.dylib" "$BASE/libtesseract.5-darwin.dylib"
           curl -fsSL -o "$D/libleptonica.6.dylib" "$BASE/libleptonica.6-darwin.dylib"
-          # Unversioned symlinks, load-bearing per 00bad35
-          ln -sf libtesseract.5.dylib "$D/libtesseract.dylib"
-          ln -sf libleptonica.6.dylib "$D/libleptonica.dylib"
           ls -la "$D"
 
       - name: Placeholders for the other tiers, manifest, traineddata
