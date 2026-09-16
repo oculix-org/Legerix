@@ -15,6 +15,11 @@ run-name: Bundled Tesseract control · ${{ github.ref_name }}
 # a workflow goes quiet the day that branch is merged or renamed, which is the
 # defect David Young found on the OculiX side (Oculix#465). Every push is
 # checked, whatever the branch.
+#
+# The natives are cached on the hash of everything that decides them: the
+# build scripts, the pom (versions) and this file (the build steps). A push
+# that touches none of those runs the theorem on the natives of the last
+# build instead of compiling the codec chain again on three runners.
 
 on:
   workflow_dispatch:
@@ -38,7 +43,15 @@ jobs:
           echo "TESSERACT_VERSION=$(mvn build-helper:parse-version org.apache.maven.plugins:maven-help-plugin:3.2.0:evaluate -Dexpression=tesseract.version.long -q -DforceStdout)" >> $GITHUB_ENV
           echo "LEPTONICA_VERSION=$(mvn build-helper:parse-version org.apache.maven.plugins:maven-help-plugin:3.2.0:evaluate -Dexpression=leptonica.version -q -DforceStdout)" >> $GITHUB_ENV
 
+      - name: Natives of the last build with the same recipe
+        id: natives
+        uses: actions/cache@v4
+        with:
+          path: out
+          key: natives-linux-x86-64-${{ hashFiles('scripts/build-*.sh', 'pom.xml', '.github/workflows/verify-octachorix-interference.yml') }}
+
       - name: Install build dependencies
+        if: steps.natives.outputs.cache-hit != 'true'
         run: |
           sudo apt-get update -q -y
           sudo apt-get install -q -y \
@@ -46,6 +59,7 @@ jobs:
             curl patchelf
 
       - name: Build self-contained (static codecs)
+        if: steps.natives.outputs.cache-hit != 'true'
         run: |
           bash ./scripts/build-self-contained-local.sh
           mkdir -p out
@@ -81,7 +95,15 @@ jobs:
           echo "TESSERACT_VERSION=$(mvn build-helper:parse-version org.apache.maven.plugins:maven-help-plugin:3.2.0:evaluate -Dexpression=tesseract.version.long -q -DforceStdout)" >> $GITHUB_ENV
           echo "LEPTONICA_VERSION=$(mvn build-helper:parse-version org.apache.maven.plugins:maven-help-plugin:3.2.0:evaluate -Dexpression=leptonica.version -q -DforceStdout)" >> $GITHUB_ENV
 
+      - name: Natives of the last build with the same recipe
+        id: natives
+        uses: actions/cache@v4
+        with:
+          path: out
+          key: natives-linux-x86-64-legacy-${{ hashFiles('scripts/build-*.sh', 'pom.xml', '.github/workflows/verify-octachorix-interference.yml') }}
+
       - name: Build self-contained (static codecs) in manylinux_2_28 (x86_64)
+        if: steps.natives.outputs.cache-hit != 'true'
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/io -w /io \
@@ -150,13 +172,22 @@ jobs:
           echo "TESSERACT_VERSION=$(mvn build-helper:parse-version org.apache.maven.plugins:maven-help-plugin:3.2.0:evaluate -Dexpression=tesseract.version.long -q -DforceStdout)" >> $GITHUB_ENV
           echo "LEPTONICA_VERSION=$(mvn build-helper:parse-version org.apache.maven.plugins:maven-help-plugin:3.2.0:evaluate -Dexpression=leptonica.version -q -DforceStdout)" >> $GITHUB_ENV
 
+      - name: Natives of the last build with the same recipe
+        id: natives
+        uses: actions/cache@v4
+        with:
+          path: out
+          key: natives-darwin-${{ hashFiles('scripts/build-*.sh', 'pom.xml', '.github/workflows/verify-octachorix-interference.yml') }}
+
       - name: Install build dependencies
+        if: steps.natives.outputs.cache-hit != 'true'
         run: |
           brew install autoconf automake libtool pkg-config \
                        libpng jpeg libtiff \
                        webp xz zstd jbigkit libdeflate
 
       - name: Build leptonica + tesseract
+        if: steps.natives.outputs.cache-hit != 'true'
         run: |
           PREFIX="$RUNNER_TEMP/legerix-prefix"
           mkdir -p "$PREFIX"
@@ -167,6 +198,7 @@ jobs:
           cp -L "$PREFIX/lib/libtesseract.5.dylib" out/
 
       - name: Rewrite install names + codesign (relocatable dylibs)
+        if: steps.natives.outputs.cache-hit != 'true'
         run: |
           install_name_tool -id "@loader_path/libleptonica.6.dylib" out/libleptonica.6.dylib
           install_name_tool -id "@loader_path/libtesseract.5.dylib" out/libtesseract.5.dylib
