@@ -42,6 +42,7 @@ CPPFLAGS="-I$PREFIX/include" \
     --disable-graphics \
     --disable-openmp \
     --disable-doc \
+    --disable-tessdata-prefix \
     CFLAGS="-O2 -fPIC" \
     CXXFLAGS="-O2 -fPIC -std=c++17"
 
