@@ -42,35 +42,21 @@ jobs:
         run: |
           sudo apt-get update -q -y
           sudo apt-get install -q -y \
-            build-essential autoconf automake libtool pkg-config \
-            libpng-dev libjpeg-dev libtiff-dev zlib1g-dev \
-            libwebp-dev libzstd-dev liblzma-dev liblerc-dev libjbig-dev libdeflate-dev \
+            build-essential cmake nasm autoconf automake libtool pkg-config \
             curl patchelf
 
-      - name: Build leptonica + tesseract
+      - name: Build self-contained (static codecs)
         run: |
-          PREFIX="$RUNNER_TEMP/legerix-prefix"
-          mkdir -p "$PREFIX"
-          ./scripts/build-leptonica.sh "$LEPTONICA_VERSION" "$PREFIX"
-          ./scripts/build-tesseract.sh "$TESSERACT_VERSION" "$PREFIX"
+          bash ./scripts/build-self-contained-local.sh
           mkdir -p out
-          cp -L "$PREFIX/lib/libleptonica.so.6" out/
-          cp -L "$PREFIX/lib/libtesseract.so.5" out/
-
-      - name: Bundle transitive codec deps (jpeg, png, tiff, zlib)
-        run: |
-          LIB_DIR="/usr/lib/x86_64-linux-gnu"
-          cp -L "$LIB_DIR"/libjpeg.so.*     out/ 2>/dev/null || true
-          cp -L "$LIB_DIR"/libpng16.so.*    out/ 2>/dev/null || true
-          cp -L "$LIB_DIR"/libtiff.so.*     out/ 2>/dev/null || true
-          cp -L "$LIB_DIR"/libz.so.*        out/ 2>/dev/null || true
-          cp -L "$LIB_DIR"/libwebp.so.*     out/ 2>/dev/null || true
-          cp -L "$LIB_DIR"/libzstd.so.*     out/ 2>/dev/null || true
-          cp -L "$LIB_DIR"/liblzma.so.*     out/ 2>/dev/null || true
-          cp -L "$LIB_DIR"/libLerc.so.*     out/ 2>/dev/null || true
-          cp -L "$LIB_DIR"/libjbig.so.*     out/ 2>/dev/null || true
-          cp -L "$LIB_DIR"/libdeflate.so.*  out/ 2>/dev/null || true
-          cp -L "$LIB_DIR"/libsharpyuv.so.* out/ 2>/dev/null || true
+          cp -L src/main/resources/META-INF/legerix/natives/linux-x86-64/libleptonica.so.6 out/
+          cp -L src/main/resources/META-INF/legerix/natives/linux-x86-64/libtesseract.so.5 out/
+          echo "=== NEEDED of libtesseract.so.5 (no codec expected) ==="
+          readelf -d out/libtesseract.so.5 | grep NEEDED || true
+          if readelf -d out/libtesseract.so.5 out/libleptonica.so.6 | grep -qE "NEEDED.*(libjpeg|libpng|libtiff|libwebp|libzstd|liblzma|libdeflate)"; then
+            echo "ERROR: static link failed — a codec is still in DT_NEEDED"
+            exit 1
+          fi
           ls -la out/
 
       - uses: actions/upload-artifact@v4
@@ -189,21 +175,6 @@ jobs:
                                     out/libtesseract.5.dylib
           codesign -f -s - out/libleptonica.6.dylib
           codesign -f -s - out/libtesseract.5.dylib
-
-      - name: Bundle transitive codec deps from homebrew
-        run: |
-          BREW_PREFIX="$(brew --prefix)"
-          cp -L "$BREW_PREFIX"/lib/libjpeg.*.dylib       out/
-          cp -L "$BREW_PREFIX"/lib/libpng16.*.dylib      out/
-          cp -L "$BREW_PREFIX"/lib/libtiff.*.dylib       out/
-          cp -L "$BREW_PREFIX"/lib/libwebp.*.dylib       out/ 2>/dev/null || true
-          cp -L "$BREW_PREFIX"/lib/libzstd.*.dylib       out/ 2>/dev/null || true
-          cp -L "$BREW_PREFIX"/lib/liblzma.*.dylib       out/ 2>/dev/null || true
-          cp -L "$BREW_PREFIX"/lib/libLerc.*.dylib       out/ 2>/dev/null || true
-          cp -L "$BREW_PREFIX"/lib/libjbig.*.dylib       out/ 2>/dev/null || true
-          cp -L "$BREW_PREFIX"/lib/libdeflate.*.dylib    out/ 2>/dev/null || true
-          cp -L "$BREW_PREFIX"/lib/libsharpyuv.*.dylib   out/ 2>/dev/null || true
-          ls -la out/
 
       - name: Architecture of every produced dylib
         run: |
