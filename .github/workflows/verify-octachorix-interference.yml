@@ -31,9 +31,9 @@ jobs:
   build_linux_x64:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           java-version: 17
           distribution: temurin
@@ -45,7 +45,7 @@ jobs:
 
       - name: Natives of the last build with the same recipe
         id: natives
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: out
           key: natives-linux-x86-64-${{ hashFiles('scripts/build-*.sh', 'pom.xml', '.github/workflows/verify-octachorix-interference.yml') }}
@@ -73,7 +73,7 @@ jobs:
           fi
           ls -la out/
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: fresh-linux-x86-64
           path: out/
@@ -83,9 +83,9 @@ jobs:
   build_linux_x64_legacy:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           java-version: 17
           distribution: temurin
@@ -97,7 +97,7 @@ jobs:
 
       - name: Natives of the last build with the same recipe
         id: natives
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: out
           key: natives-linux-x86-64-legacy-${{ hashFiles('scripts/build-*.sh', 'pom.xml', '.github/workflows/verify-octachorix-interference.yml') }}
@@ -141,7 +141,7 @@ jobs:
             fi
           done
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: fresh-linux-x86-64-legacy
           path: out/
@@ -152,9 +152,9 @@ jobs:
   build_macos_x64:
     runs-on: macos-15-intel
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           java-version: 17
           distribution: temurin
@@ -174,7 +174,7 @@ jobs:
 
       - name: Natives of the last build with the same recipe
         id: natives
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: out
           key: natives-darwin-${{ hashFiles('scripts/build-*.sh', 'pom.xml', '.github/workflows/verify-octachorix-interference.yml') }}
@@ -218,7 +218,7 @@ jobs:
             fi
           done
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: fresh-darwin
           path: out/
@@ -250,14 +250,14 @@ jobs:
     name: ${{ matrix.tier }} + system tesseract
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: oculix-org/Octachorix
           path: octachorix
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           java-version: '17'
           distribution: 'temurin'
@@ -270,7 +270,7 @@ jobs:
           echo "TESSERACT_VERSION=$(mvn build-helper:parse-version org.apache.maven.plugins:maven-help-plugin:3.2.0:evaluate -Dexpression=tesseract.version.long -q -DforceStdout)" >> $GITHUB_ENV
 
       - name: Natives built by this run (${{ matrix.artifact }})
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ${{ matrix.artifact }}
           path: natives
@@ -303,7 +303,7 @@ jobs:
           -Doctachorix.test.libs.tessdata=${{ github.workspace }}/tessdata
           -Doctachorix.test.expectedVersion=${{ env.TESSERACT_VERSION }}"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: surefire-${{ matrix.tier }}
@@ -324,15 +324,15 @@ jobs:
     runs-on: ubuntu-24.04
     name: jar-mode extraction probe (#21)
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           java-version: '17'
           distribution: 'temurin'
 
       - name: Stage the fresh linux-x86-64 natives
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: fresh-linux-x86-64
           path: src/main/resources/META-INF/legerix/natives/linux-x86-64
@@ -365,15 +365,15 @@ jobs:
     runs-on: macos-15-intel
     name: macOS without Homebrew codecs (message probe)
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           java-version: '17'
           distribution: 'temurin'
 
       - name: Stage the fresh darwin natives
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: fresh-darwin
           path: src/main/resources/META-INF/legerix/natives/darwin

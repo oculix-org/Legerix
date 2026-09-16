@@ -17,9 +17,9 @@ jobs:
   build_linux_x64:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           java-version: 17
           distribution: temurin
@@ -58,7 +58,7 @@ jobs:
           echo "OK: $TIER natives are self-contained (no codec DT_NEEDED)"
           ls -la out/
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: linux-x86-64
           path: out/
@@ -67,9 +67,9 @@ jobs:
   build_linux_x64_legacy:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           java-version: 17
           distribution: temurin
@@ -124,7 +124,7 @@ jobs:
             fi
           done
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: linux-x86-64-legacy
           path: out/
@@ -133,9 +133,9 @@ jobs:
   build_linux_aarch64:
     runs-on: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           java-version: 17
           distribution: temurin
@@ -173,7 +173,7 @@ jobs:
           echo "OK: $TIER natives are self-contained (no codec DT_NEEDED)"
           ls -la out/
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: linux-aarch64
           path: out/
@@ -182,9 +182,9 @@ jobs:
   build_linux_aarch64_legacy:
     runs-on: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           java-version: 17
           distribution: temurin
@@ -234,7 +234,7 @@ jobs:
             fi
           done
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: linux-aarch64-legacy
           path: out/
@@ -250,9 +250,9 @@ jobs:
   build_macos_x64:
     runs-on: macos-15-intel
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           java-version: 17
           distribution: temurin
@@ -294,7 +294,7 @@ jobs:
           codesign -f -s - out/libleptonica.6.dylib
           codesign -f -s - out/libtesseract.5.dylib
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: darwin
           path: out/
@@ -303,9 +303,9 @@ jobs:
   build_macos_aarch64:
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           java-version: 17
           distribution: temurin
@@ -348,7 +348,7 @@ jobs:
           codesign -f -s - out/libleptonica.6.dylib
           codesign -f -s - out/libtesseract.5.dylib
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: darwin-aarch64
           path: out/
@@ -357,9 +357,9 @@ jobs:
   build_windows_x64:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           java-version: 17
           distribution: temurin
@@ -376,7 +376,7 @@ jobs:
       # by GitHub Actions, dropping subsequent runs to ~2 min. Cache key
       # depends on tesseract+leptonica versions so a version bump invalidates.
       - name: Cache vcpkg
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             C:/vcpkg/installed
@@ -406,7 +406,7 @@ jobs:
           cp "$VCPKG_BIN"/*.dll out/
           ls -la out/
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: win32-x86-64
           path: out/
@@ -423,9 +423,9 @@ jobs:
       - build_windows_x64
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           java-version: 17
           distribution: temurin
@@ -435,7 +435,7 @@ jobs:
           echo "POM_VERSION=$(mvn build-helper:parse-version org.apache.maven.plugins:maven-help-plugin:3.2.0:evaluate -Dexpression=project.version -q -DforceStdout)" >> $GITHUB_ENV
 
       - name: Download all native artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
 
       - name: Stage natives into src/main/resources
         run: |
@@ -552,7 +552,7 @@ jobs:
       - name: JAR-mode probes (Legerix#21)
         run: bash ./scripts/run-payload-probes.sh
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dist
           path: target/legerix*
@@ -569,9 +569,9 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           java-version: 17
           distribution: temurin
@@ -582,7 +582,7 @@ jobs:
           VERSION=$(mvn help:evaluate -Dexpression=project.version -q -DforceStdout)
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
 
       - name: Prepare release assets
         run: |
