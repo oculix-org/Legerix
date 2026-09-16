@@ -33,52 +33,29 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update -q -y
-          # libtiff-dev pulls in headers but not all its runtime codec
-          # dependencies, so we install them explicitly. Without these,
-          # leptonica/tesseract still link against libwebp/libzstd/etc.
-          # but the runtime .so files are absent from /usr/lib at bundle
-          # time and the verify NEEDED step (correctly) fails.
+          # The codecs are built from source and linked statically by the
+          # script below; the host only provides the toolchain.
           sudo apt-get install -q -y \
-            build-essential autoconf automake libtool pkg-config \
-            libpng-dev libjpeg-dev libtiff-dev zlib1g-dev \
-            libwebp-dev libzstd-dev liblzma-dev liblerc-dev libjbig-dev libdeflate-dev \
+            build-essential cmake nasm autoconf automake libtool pkg-config \
             curl patchelf
 
-      - name: Build leptonica + tesseract
+      - name: Build self-contained (static codecs)
         run: |
-          PREFIX="$RUNNER_TEMP/legerix-prefix"
-          mkdir -p "$PREFIX"
-          ./scripts/build-leptonica.sh "$LEPTONICA_VERSION" "$PREFIX"
-          ./scripts/build-tesseract.sh "$TESSERACT_VERSION" "$PREFIX"
+          # Two files per tier, no codec in DT_NEEDED: the same build as the
+          # legacy tiers, so nothing has to be copied from the host and nothing
+          # is left for the loader to find on the user's machine.
+          bash ./scripts/build-self-contained-local.sh
+          TIER="linux-$(uname -m | sed 's/x86_64/x86-64/')"
           mkdir -p out
-          cp -L "$PREFIX/lib/libleptonica.so.6" out/
-          cp -L "$PREFIX/lib/libtesseract.so.5" out/
-
-      - name: Bundle transitive codec deps (jpeg, png, tiff, zlib)
-        run: |
-          # Bundle the system libs leptonica/tesseract linked against, so
-          # minimal containers (Ubuntu slim, Alpine, distroless) where these
-          # are not preinstalled can still load Legerix natives. RPATH=$ORIGIN
-          # set at build time means the loader will find them in the same
-          # directory at runtime.
-          LIB_DIR="/usr/lib/x86_64-linux-gnu"
-          # Core image codec deps (leptonica/tesseract direct deps)
-          cp -L "$LIB_DIR"/libjpeg.so.*     out/ 2>/dev/null || true
-          cp -L "$LIB_DIR"/libpng16.so.*    out/ 2>/dev/null || true
-          cp -L "$LIB_DIR"/libtiff.so.*     out/ 2>/dev/null || true
-          cp -L "$LIB_DIR"/libz.so.*        out/ 2>/dev/null || true
-          # Transitive deps pulled in by libtiff on modern Ubuntu (webp,
-          # zstd, lzma, Lerc, jbig, deflate). Bundling these prevents the
-          # same class of "missing libfoo on minimal container" failure
-          # one level deeper in the dependency graph.
-          cp -L "$LIB_DIR"/libwebp.so.*     out/ 2>/dev/null || true
-          cp -L "$LIB_DIR"/libzstd.so.*     out/ 2>/dev/null || true
-          cp -L "$LIB_DIR"/liblzma.so.*     out/ 2>/dev/null || true
-          cp -L "$LIB_DIR"/libLerc.so.*     out/ 2>/dev/null || true
-          cp -L "$LIB_DIR"/libjbig.so.*     out/ 2>/dev/null || true
-          cp -L "$LIB_DIR"/libdeflate.so.*  out/ 2>/dev/null || true
-          # libsharpyuv is a transitive of libwebp itself (introduced in webp 1.3+)
-          cp -L "$LIB_DIR"/libsharpyuv.so.* out/ 2>/dev/null || true
+          cp -L "src/main/resources/META-INF/legerix/natives/$TIER/libleptonica.so.6" out/
+          cp -L "src/main/resources/META-INF/legerix/natives/$TIER/libtesseract.so.5" out/
+          echo "=== NEEDED of libtesseract.so.5 (no codec expected) ==="
+          readelf -d out/libtesseract.so.5 | grep NEEDED || true
+          if readelf -d out/libtesseract.so.5 out/libleptonica.so.6 | grep -qE "NEEDED.*(libjpeg|libpng|libtiff|libwebp|libzstd|liblzma|libdeflate)"; then
+            echo "ERROR: static link failed — a codec is still in DT_NEEDED"
+            exit 1
+          fi
+          echo "OK: $TIER natives are self-contained (no codec DT_NEEDED)"
           ls -la out/
 
       - uses: actions/upload-artifact@v4
@@ -171,47 +148,29 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update -q -y
-          # libtiff-dev pulls in headers but not all its runtime codec
-          # dependencies, so we install them explicitly. Without these,
-          # leptonica/tesseract still link against libwebp/libzstd/etc.
-          # but the runtime .so files are absent from /usr/lib at bundle
-          # time and the verify NEEDED step (correctly) fails.
+          # The codecs are built from source and linked statically by the
+          # script below; the host only provides the toolchain.
           sudo apt-get install -q -y \
-            build-essential autoconf automake libtool pkg-config \
-            libpng-dev libjpeg-dev libtiff-dev zlib1g-dev \
-            libwebp-dev libzstd-dev liblzma-dev liblerc-dev libjbig-dev libdeflate-dev \
+            build-essential cmake nasm autoconf automake libtool pkg-config \
             curl patchelf
 
-      - name: Build leptonica + tesseract
+      - name: Build self-contained (static codecs)
         run: |
-          PREFIX="$RUNNER_TEMP/legerix-prefix"
-          mkdir -p "$PREFIX"
-          ./scripts/build-leptonica.sh "$LEPTONICA_VERSION" "$PREFIX"
-          ./scripts/build-tesseract.sh "$TESSERACT_VERSION" "$PREFIX"
+          # Two files per tier, no codec in DT_NEEDED: the same build as the
+          # legacy tiers, so nothing has to be copied from the host and nothing
+          # is left for the loader to find on the user's machine.
+          bash ./scripts/build-self-contained-local.sh
+          TIER="linux-$(uname -m | sed 's/x86_64/x86-64/')"
           mkdir -p out
-          cp -L "$PREFIX/lib/libleptonica.so.6" out/
-          cp -L "$PREFIX/lib/libtesseract.so.5" out/
-
-      - name: Bundle transitive codec deps (jpeg, png, tiff, zlib)
-        run: |
-          # Same bundling as the x86_64 modern job, but from the aarch64 lib
-          # directory. RPATH=$ORIGIN ensures runtime resolution from the
-          # extracted-natives directory.
-          LIB_DIR="/usr/lib/aarch64-linux-gnu"
-          # Core image codec deps
-          cp -L "$LIB_DIR"/libjpeg.so.*     out/ 2>/dev/null || true
-          cp -L "$LIB_DIR"/libpng16.so.*    out/ 2>/dev/null || true
-          cp -L "$LIB_DIR"/libtiff.so.*     out/ 2>/dev/null || true
-          cp -L "$LIB_DIR"/libz.so.*        out/ 2>/dev/null || true
-          # Transitive deps via libtiff
-          cp -L "$LIB_DIR"/libwebp.so.*     out/ 2>/dev/null || true
-          cp -L "$LIB_DIR"/libzstd.so.*     out/ 2>/dev/null || true
-          cp -L "$LIB_DIR"/liblzma.so.*     out/ 2>/dev/null || true
-          cp -L "$LIB_DIR"/libLerc.so.*     out/ 2>/dev/null || true
-          cp -L "$LIB_DIR"/libjbig.so.*     out/ 2>/dev/null || true
-          cp -L "$LIB_DIR"/libdeflate.so.*  out/ 2>/dev/null || true
-          # libsharpyuv is a transitive of libwebp itself (webp 1.3+)
-          cp -L "$LIB_DIR"/libsharpyuv.so.* out/ 2>/dev/null || true
+          cp -L "src/main/resources/META-INF/legerix/natives/$TIER/libleptonica.so.6" out/
+          cp -L "src/main/resources/META-INF/legerix/natives/$TIER/libtesseract.so.5" out/
+          echo "=== NEEDED of libtesseract.so.5 (no codec expected) ==="
+          readelf -d out/libtesseract.so.5 | grep NEEDED || true
+          if readelf -d out/libtesseract.so.5 out/libleptonica.so.6 | grep -qE "NEEDED.*(libjpeg|libpng|libtiff|libwebp|libzstd|liblzma|libdeflate)"; then
+            echo "ERROR: static link failed — a codec is still in DT_NEEDED"
+            exit 1
+          fi
+          echo "OK: $TIER natives are self-contained (no codec DT_NEEDED)"
           ls -la out/
 
       - uses: actions/upload-artifact@v4
@@ -235,7 +194,7 @@ jobs:
           echo "TESSERACT_VERSION=$(mvn build-helper:parse-version org.apache.maven.plugins:maven-help-plugin:3.2.0:evaluate -Dexpression=tesseract.version.long -q -DforceStdout)" >> $GITHUB_ENV
           echo "LEPTONICA_VERSION=$(mvn build-helper:parse-version org.apache.maven.plugins:maven-help-plugin:3.2.0:evaluate -Dexpression=leptonica.version -q -DforceStdout)" >> $GITHUB_ENV
 
-      - name: Build in manylinux_2_28 (aarch64)
+      - name: Build self-contained (static codecs) in manylinux_2_28 (aarch64)
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/io -w /io \
@@ -243,36 +202,22 @@ jobs:
             -e LEPTONICA_VERSION=${{ env.LEPTONICA_VERSION }} \
             quay.io/pypa/manylinux_2_28_aarch64 \
             /bin/bash -ec '
+              # Same static build as the x86-64 legacy tier: every codec is
+              # linked into the two .so, nothing is copied from the container.
               yum install -y -q \
-                libpng-devel libjpeg-turbo-devel libtiff-devel zlib-devel \
-                libwebp-devel libzstd-devel xz-devel libdeflate-devel jbigkit-devel \
-                autoconf automake libtool pkgconfig curl
-              # libLerc not in CentOS 8 stream repos — libtiff on this
-              # platform was built older without LERC support, so it is
-              # not referenced as a NEEDED. Same for libsharpyuv (webp 1.3+
-              # is too recent for manylinux_2_28 — the bundled webp is older).
-              PREFIX=/io/_legacy-prefix
-              mkdir -p "$PREFIX"
-              ./scripts/build-leptonica.sh "$LEPTONICA_VERSION" "$PREFIX"
-              ./scripts/build-tesseract.sh "$TESSERACT_VERSION" "$PREFIX"
+                cmake autoconf automake libtool pkgconfig \
+                curl tar gzip make gcc gcc-c++
+              bash ./scripts/build-self-contained-local.sh
               mkdir -p out
-              cp -L "$PREFIX/lib/libleptonica.so.6" out/
-              cp -L "$PREFIX/lib/libtesseract.so.5" out/
-              # Bundle transitive codec deps from the aarch64 manylinux_2_28
-              # container (CentOS 8 family, libs in /usr/lib64).
-              cp -L /usr/lib64/libjpeg.so.*     out/ 2>/dev/null || true
-              cp -L /usr/lib64/libpng16.so.*    out/ 2>/dev/null || true
-              cp -L /usr/lib64/libtiff.so.*     out/ 2>/dev/null || true
-              cp -L /usr/lib64/libz.so.*        out/ 2>/dev/null || true
-              # Transitive deps via libtiff on manylinux_2_28
-              cp -L /usr/lib64/libwebp.so.*     out/ 2>/dev/null || true
-              cp -L /usr/lib64/libzstd.so.*     out/ 2>/dev/null || true
-              cp -L /usr/lib64/liblzma.so.*     out/ 2>/dev/null || true
-              cp -L /usr/lib64/libLerc.so.*     out/ 2>/dev/null || true
-              cp -L /usr/lib64/libjbig.so.*     out/ 2>/dev/null || true
-              cp -L /usr/lib64/libdeflate.so.*  out/ 2>/dev/null || true
-              # libsharpyuv is a transitive of libwebp itself (webp 1.3+)
-              cp -L /usr/lib64/libsharpyuv.so.* out/ 2>/dev/null || true
+              cp -L src/main/resources/META-INF/legerix/natives/linux-aarch64-legacy/libleptonica.so.6 out/
+              cp -L src/main/resources/META-INF/legerix/natives/linux-aarch64-legacy/libtesseract.so.5 out/
+              echo "=== NEEDED of libtesseract.so.5 (no codec expected) ==="
+              readelf -d out/libtesseract.so.5 | grep NEEDED || true
+              if readelf -d out/libtesseract.so.5 out/libleptonica.so.6 | grep -qE "NEEDED.*(libjpeg|libpng|libtiff|libwebp|libzstd|liblzma|libdeflate)"; then
+                echo "ERROR: static link failed — a codec is still in DT_NEEDED"
+                exit 1
+              fi
+              echo "OK: legacy aarch64 natives are self-contained (no codec DT_NEEDED)"
               ls -la out/
             '
 
@@ -319,14 +264,8 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          # webp/xz/zstd/jbigkit/lerc/libdeflate are pulled in by libtiff at
-          # runtime — install them explicitly so they exist in $(brew --prefix)/lib
-          # when we bundle them after the build.
-          # webp/xz/zstd/jbigkit/libdeflate are pulled in by libtiff at
-          # runtime — install them explicitly so they exist in $(brew --prefix)/lib
-          # when we bundle them after the build.
-          # Note: lerc is NOT in homebrew, so libtiff on macOS is compiled
-          # without LERC support and never references libLerc as NEEDED.
+          # The darwin tiers link Homebrew's codecs by absolute path and ship
+          # none of them: Homebrew is the documented prerequisite (README).
           brew install autoconf automake libtool pkg-config \
                        libpng jpeg libtiff \
                        webp xz zstd jbigkit libdeflate
@@ -343,14 +282,10 @@ jobs:
 
       - name: Rewrite install names + codesign (relocatable dylibs)
         run: |
-          # From David Young's rapport Legerix#20 (RC2, RC3):
-          # - Fresh-built dylibs record LC_ID_DYLIB = $PREFIX/lib/... (the CI
-          #   runner path) and libtesseract's dependency on libleptonica points
-          #   at the same absolute prefix. Neither exists on a user's machine.
-          # - install_name_tool -id + -change makes both self-relative via
-          #   @loader_path so dyld resolves them from wherever Legerix extracts.
-          # - codesign is required on arm64 after install_name_tool touches the
-          #   Mach-O; without it dyld rejects the modified binary.
+          # Fresh-built dylibs record the runner's prefix as their install name
+          # and as libtesseract's reference to libleptonica; @loader_path makes
+          # both relative to the extraction directory. codesign is mandatory
+          # after install_name_tool on arm64.
           install_name_tool -id "@loader_path/libleptonica.6.dylib" out/libleptonica.6.dylib
           install_name_tool -id "@loader_path/libtesseract.5.dylib" out/libtesseract.5.dylib
           install_name_tool -change "$RUNNER_TEMP/legerix-prefix/lib/libleptonica.6.dylib" \
@@ -358,46 +293,6 @@ jobs:
                                     out/libtesseract.5.dylib
           codesign -f -s - out/libleptonica.6.dylib
           codesign -f -s - out/libtesseract.5.dylib
-
-          # RC3: expose unversioned aliases so tess4j's Native.load("tesseract")
-          # matches without going through the Legerix loader.
-          # DO NOT REMOVE — David Young identified in Legerix#20 that these
-          # aliases are load-bearing for assertBundledTesseract() on macOS
-          # (the payload ships libtesseract.5.dylib but JNA short-name lookup
-          # asks for libtesseract.dylib, which the version-before-extension
-          # convention prevents from ever matching without an unversioned
-          # alias). They also protect external consumers of tess4j directly.
-          ln -sf libleptonica.6.dylib out/libleptonica.dylib
-          ln -sf libtesseract.5.dylib out/libtesseract.dylib
-
-      - name: Bundle transitive codec deps from homebrew
-        run: |
-          # Bundle the homebrew dylibs leptonica/tesseract linked against,
-          # so users without those brew formulae installed can still load
-          # Legerix. RPATH=@loader_path set at build time resolves these
-          # at runtime from the same directory as libtesseract.
-          # Note: libz ships natively on macOS at /usr/lib/libz.dylib so no
-          # bundling needed for it.
-          BREW_PREFIX="$(brew --prefix)"
-          # RC5: fail hard if a critical codec is missing rather than shipping
-          # a jar that silently lacks it. libjpeg / libpng / libtiff are direct
-          # dependencies of libleptonica — a missing one produces UnsatisfiedLinkError
-          # on the first pixReadPng / pixReadJpeg call, hours after startup.
-          cp -L "$BREW_PREFIX"/lib/libjpeg.*.dylib       out/
-          cp -L "$BREW_PREFIX"/lib/libpng16.*.dylib      out/
-          cp -L "$BREW_PREFIX"/lib/libtiff.*.dylib       out/
-          # Transitive deps via libtiff on homebrew (webp, zstd, lzma,
-          # Lerc, jbig, deflate). brew installs these as separate formulae
-          # under different names; copy what's present.
-          cp -L "$BREW_PREFIX"/lib/libwebp.*.dylib       out/ 2>/dev/null || true
-          cp -L "$BREW_PREFIX"/lib/libzstd.*.dylib       out/ 2>/dev/null || true
-          cp -L "$BREW_PREFIX"/lib/liblzma.*.dylib       out/ 2>/dev/null || true
-          cp -L "$BREW_PREFIX"/lib/libLerc.*.dylib       out/ 2>/dev/null || true
-          cp -L "$BREW_PREFIX"/lib/libjbig.*.dylib       out/ 2>/dev/null || true
-          cp -L "$BREW_PREFIX"/lib/libdeflate.*.dylib    out/ 2>/dev/null || true
-          # libsharpyuv is a transitive of libwebp itself (webp 1.3+)
-          cp -L "$BREW_PREFIX"/lib/libsharpyuv.*.dylib   out/ 2>/dev/null || true
-          ls -la out/
 
       - uses: actions/upload-artifact@v4
         with:
@@ -423,14 +318,8 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          # webp/xz/zstd/jbigkit/lerc/libdeflate are pulled in by libtiff at
-          # runtime — install them explicitly so they exist in $(brew --prefix)/lib
-          # when we bundle them after the build.
-          # webp/xz/zstd/jbigkit/libdeflate are pulled in by libtiff at
-          # runtime — install them explicitly so they exist in $(brew --prefix)/lib
-          # when we bundle them after the build.
-          # Note: lerc is NOT in homebrew, so libtiff on macOS is compiled
-          # without LERC support and never references libLerc as NEEDED.
+          # The darwin tiers link Homebrew's codecs by absolute path and ship
+          # none of them: Homebrew is the documented prerequisite (README).
           brew install autoconf automake libtool pkg-config \
                        libpng jpeg libtiff \
                        webp xz zstd jbigkit libdeflate
@@ -447,14 +336,10 @@ jobs:
 
       - name: Rewrite install names + codesign (relocatable dylibs)
         run: |
-          # From David Young's rapport Legerix#20 (RC2, RC3):
-          # - Fresh-built dylibs record LC_ID_DYLIB = $PREFIX/lib/... (the CI
-          #   runner path) and libtesseract's dependency on libleptonica points
-          #   at the same absolute prefix. Neither exists on a user's machine.
-          # - install_name_tool -id + -change makes both self-relative via
-          #   @loader_path so dyld resolves them from wherever Legerix extracts.
-          # - codesign is required on arm64 after install_name_tool touches the
-          #   Mach-O; without it dyld rejects the modified binary.
+          # Fresh-built dylibs record the runner's prefix as their install name
+          # and as libtesseract's reference to libleptonica; @loader_path makes
+          # both relative to the extraction directory. codesign is mandatory
+          # after install_name_tool on arm64.
           install_name_tool -id "@loader_path/libleptonica.6.dylib" out/libleptonica.6.dylib
           install_name_tool -id "@loader_path/libtesseract.5.dylib" out/libtesseract.5.dylib
           install_name_tool -change "$RUNNER_TEMP/legerix-prefix/lib/libleptonica.6.dylib" \
@@ -462,42 +347,6 @@ jobs:
                                     out/libtesseract.5.dylib
           codesign -f -s - out/libleptonica.6.dylib
           codesign -f -s - out/libtesseract.5.dylib
-
-          # RC3: expose unversioned aliases so tess4j's Native.load("tesseract")
-          # matches without going through the Legerix loader.
-          # DO NOT REMOVE — David Young identified in Legerix#20 that these
-          # aliases are load-bearing for assertBundledTesseract() on macOS
-          # (the payload ships libtesseract.5.dylib but JNA short-name lookup
-          # asks for libtesseract.dylib, which the version-before-extension
-          # convention prevents from ever matching without an unversioned
-          # alias). They also protect external consumers of tess4j directly.
-          ln -sf libleptonica.6.dylib out/libleptonica.dylib
-          ln -sf libtesseract.5.dylib out/libtesseract.dylib
-
-      - name: Bundle transitive codec deps from homebrew
-        run: |
-          # Same bundling as the x86_64 macOS job, but from the Apple
-          # Silicon brew prefix. RPATH=@loader_path resolves at runtime.
-          BREW_PREFIX="$(brew --prefix)"
-          # RC5: fail hard if a critical codec is missing rather than shipping
-          # a jar that silently lacks it. libjpeg / libpng / libtiff are direct
-          # dependencies of libleptonica — a missing one produces UnsatisfiedLinkError
-          # on the first pixReadPng / pixReadJpeg call, hours after startup.
-          cp -L "$BREW_PREFIX"/lib/libjpeg.*.dylib       out/
-          cp -L "$BREW_PREFIX"/lib/libpng16.*.dylib      out/
-          cp -L "$BREW_PREFIX"/lib/libtiff.*.dylib       out/
-          # Transitive deps via libtiff on homebrew (webp, zstd, lzma,
-          # Lerc, jbig, deflate). brew installs these as separate formulae
-          # under different names; copy what's present.
-          cp -L "$BREW_PREFIX"/lib/libwebp.*.dylib       out/ 2>/dev/null || true
-          cp -L "$BREW_PREFIX"/lib/libzstd.*.dylib       out/ 2>/dev/null || true
-          cp -L "$BREW_PREFIX"/lib/liblzma.*.dylib       out/ 2>/dev/null || true
-          cp -L "$BREW_PREFIX"/lib/libLerc.*.dylib       out/ 2>/dev/null || true
-          cp -L "$BREW_PREFIX"/lib/libjbig.*.dylib       out/ 2>/dev/null || true
-          cp -L "$BREW_PREFIX"/lib/libdeflate.*.dylib    out/ 2>/dev/null || true
-          # libsharpyuv is a transitive of libwebp itself (webp 1.3+)
-          cp -L "$BREW_PREFIX"/lib/libsharpyuv.*.dylib   out/ 2>/dev/null || true
-          ls -la out/
 
       - uses: actions/upload-artifact@v4
         with:
@@ -622,15 +471,13 @@ jobs:
         run: |
           echo "=== Natives staged ==="
           find src/main/resources -type f \( -name "*.so*" -o -name "*.dylib" -o -name "*.dll" \) | sort
-          # Each Linux/macOS tier must ship at least the core 2 libs
-          # (leptonica + tesseract). Transitive codec deps (libjpeg, libpng,
-          # libtiff, libz) are bundled on top when present on the build
-          # system, so total per tier is >= 2 (not a strict count).
+          # Each Unix tier ships exactly the two libraries Legerix loads: the
+          # codecs are linked statically on Linux and are Homebrew's on macOS.
           # Windows: variable (every vcpkg DLL), so just assert >= 2.
           for TIER in linux-x86-64 linux-x86-64-legacy linux-aarch64 linux-aarch64-legacy darwin darwin-aarch64; do
-            COUNT=$(find "src/main/resources/$TIER" -type f \( -name "*.so*" -o -name "*.dylib" \) | wc -l)
-            if [ "$COUNT" -lt 2 ]; then
-              echo "ERROR: $TIER has only $COUNT native(s), expected at least 2 (leptonica + tesseract)"
+            COUNT=$(find "src/main/resources/META-INF/legerix/natives/$TIER" -type f \( -name "*.so*" -o -name "*.dylib" \) | wc -l)
+            if [ "$COUNT" -ne 2 ]; then
+              echo "ERROR: $TIER has $COUNT native(s), expected exactly 2 (leptonica + tesseract)"
               exit 1
             fi
             echo "OK: $TIER has $COUNT natives"
