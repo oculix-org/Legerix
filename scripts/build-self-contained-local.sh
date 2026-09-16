@@ -227,6 +227,7 @@ build_tesseract() {
         ./configure --prefix="$FINAL_PREFIX" \
             --disable-static --enable-shared \
             --disable-graphics --disable-openmp --disable-doc \
+            --disable-tessdata-prefix \
             CFLAGS="-O2 -fPIC" CXXFLAGS="-O2 -fPIC -std=c++17"
     make -j"$JOBS"; make install
 }
