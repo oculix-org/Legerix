@@ -67,9 +67,10 @@ them, and Legerix reads nothing through the class loader:
   file and which jar. There is no fallback to the old generic paths and no
   reuse of an existing cache to make up for a broken payload.
 * **a verified extraction.** `loadNatives()` works in
-  `<cache>/<legerix version>/<tier>/`, the same directory from one run to the
-  next; two applications on two Legerix versions never touch each other's
-  files. Every declared file is checked against the payload, size and CRC-32
+  `<cache>/<legerix version>/<tier>/`, with the language models in
+  `<cache>/<legerix version>/tessdata/` beside it, the same directories from
+  one run to the next; two applications on two Legerix versions never touch
+  each other's files. Every declared file is checked against the payload, size and CRC-32
   read from the jar's index, before it is reused, and extracted again
   otherwise, through a temporary file moved into place atomically. A start
   where nothing changed writes nothing. Nothing is ever deleted: a file the
