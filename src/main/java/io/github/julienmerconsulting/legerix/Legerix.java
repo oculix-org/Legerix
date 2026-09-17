@@ -19,19 +19,17 @@ import java.net.URL;
 import java.nio.channels.FileChannel;
 import java.nio.channels.FileLock;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.nio.file.SimpleFileVisitor;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
-import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Enumeration;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -43,6 +41,7 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.zip.CRC32;
 
 /**
  * Loader for the Tesseract + Leptonica natives bundled in this artifact.
@@ -161,8 +160,11 @@ public final class Legerix {
     /** Per-tier list of the files Legerix ships, written at build time. */
     static final String NATIVES_MANIFEST = "legerix-natives.txt";
 
-    /** Marks an extraction directory as belonging to a live JVM. */
+    /** Held while a JVM brings a tier directory up to date; a second JVM waits on it. */
     private static final String LOCK_FILE = ".legerix-lock";
+
+    /** Size and CRC-32 of every file Legerix wrote in a directory, one {@code name<TAB>size:crc} per line. */
+    static final String CHECKSUMS_FILE = "legerix-checksums.txt";
 
     /** Cached, idempotent extraction directory. */
     private static volatile Path extractionDir;
@@ -170,10 +172,6 @@ public final class Legerix {
     private static volatile String detectedTier;
     private static volatile String legerixVersion;
     private static volatile String tesseractVersion;
-    // Held open for the life of the JVM: another JVM that finds this lock
-    // taken leaves our extraction directory alone.
-    private static FileChannel lockChannel;
-    private static FileLock ownLock;
     /** True while loadNatives() runs, to catch reentrance through a getter. */
     private static volatile boolean loading;
     // The two files loadNatives() System.load()s, by absolute path. Published
@@ -245,35 +243,21 @@ public final class Legerix {
 
             final List<String> files = declaredNatives(payload, tierDir, os);
 
-            // A brand new private directory per loader initialisation. The
-            // old scheme reused <version>/<tier> and skipped any file already
-            // there, so a directory could end up holding the union of what
-            // several code sources contributed over time, which is exactly
-            // what made the #20 investigation unresolvable. Nothing is ever
-            // completed from another run here: what we extract is what this
-            // payload holds, and nothing else.
-            final Path versionRoot = cacheDir().resolve(legerixVersion);
-            Files.createDirectories(versionRoot);
-            final Path target = Files.createTempDirectory(versionRoot, resourceDirFor(os, arch, tier) + "-");
-            claim(target);
-            reapAbandonedExtractions(versionRoot, target);
-
-            for (final String name : files) {
-                payload.extract(tierDir + "/" + name, target.resolve(name));
-            }
-
-            // tessdata: bundled lightweight (tessdata_fast) language models
-            // covering ~80% of the world population, from the same source,
-            // into the same private directory. Consumers wanting other
-            // languages drop additional *.traineddata files in
-            // getTessdataPath().
-            final Path tessdata = target.resolve("tessdata");
-            Files.createDirectories(tessdata);
+            // One directory per version and tier, verified file by file against
+            // this payload before anything in it is reused (see syncDirectory).
+            final Path target = cacheDir().resolve(legerixVersion).resolve(resourceDirFor(os, arch, tier));
+            Files.createDirectories(target);
+            final List<String> models = new ArrayList<>();
             for (final String lang : BUNDLED_LANGUAGES) {
-                payload.extract(TESSDATA_ROOT + "/" + lang + ".traineddata",
-                        tessdata.resolve(lang + ".traineddata"));
+                models.add(lang + ".traineddata");
             }
-            tessdataDir = tessdata;
+            try (FileChannel channel = FileChannel.open(target.resolve(LOCK_FILE),
+                    StandardOpenOption.CREATE, StandardOpenOption.WRITE);
+                 FileLock held = channel.lock()) {
+                syncDirectory(payload, tierDir, files, target);
+                syncDirectory(payload, TESSDATA_ROOT, models, target.resolve("tessdata"));
+            }
+            tessdataDir = target.resolve("tessdata");
             extractionDir = target;
         }
 
@@ -398,7 +382,7 @@ public final class Legerix {
             // loadNatives() is synchronized on the class, and a class monitor
             // is reentrant: a getter called from inside loadNatives() before
             // the loaded flag is set would silently recurse instead of
-            // blocking, each turn extracting one more private directory.
+            // blocking, each turn synchronising the directory once more.
             // Fail with a name instead of hanging.
             if (loading) {
                 throw new IllegalStateException("Legerix: a public getter was called from inside loadNatives() "
@@ -757,9 +741,44 @@ public final class Legerix {
             return props;
         }
 
-        void extract(final String resource, final Path target) throws IOException {
+        /**
+         * Size and CRC-32 of an entry as {@code size:crc}, read from the jar's
+         * central directory, or computed from the bytes of an exploded payload.
+         */
+        String stamp(final String resource) throws IOException {
+            if (jar != null) {
+                final JarEntry e = jar.getJarEntry(resource);
+                if (e != null && !e.isDirectory() && e.getSize() >= 0 && e.getCrc() >= 0) {
+                    return e.getSize() + ":" + Long.toHexString(e.getCrc());
+                }
+            }
+            final CRC32 crc = new CRC32();
+            long size = 0;
             try (InputStream in = open(resource)) {
-                Files.copy(in, target, StandardCopyOption.REPLACE_EXISTING);
+                final byte[] buffer = new byte[65536];
+                int n;
+                while ((n = in.read(buffer)) > 0) {
+                    crc.update(buffer, 0, n);
+                    size += n;
+                }
+            }
+            return size + ":" + Long.toHexString(crc.getValue());
+        }
+
+        /**
+         * Writes an entry next to its target, then moves it into place atomically,
+         * so a reader never sees a half-written file. Replacing a library another
+         * JVM still has mapped fails on Windows, and is reported as such.
+         */
+        void extract(final String resource, final Path target) throws IOException {
+            final Path part = Files.createTempFile(target.getParent(), target.getFileName().toString(), ".part");
+            try (InputStream in = open(resource)) {
+                Files.copy(in, part, StandardCopyOption.REPLACE_EXISTING);
+                Files.move(part, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            } catch (final IOException e) {
+                Files.deleteIfExists(part);
+                throw new IOException("Legerix: cannot write " + target + " from " + codeSource
+                        + " (is another JVM still using a different build of this same version?)", e);
             }
         }
 
@@ -832,81 +851,66 @@ public final class Legerix {
     }
 
     /**
-     * Marks an extraction directory as in use by this JVM, for the life of
-     * the JVM. A later run finds the lock taken and leaves the directory
-     * alone; when the JVM is gone the lock is released by the OS and the
-     * directory becomes reapable. Nothing here deletes anything.
+     * Brings a cache directory in line with what the payload holds for the
+     * given names. A file whose recorded size and CRC-32 still match the
+     * payload entry, and whose size on disk is right, is kept; any other is
+     * extracted again. The checksums file then records the whole set. Nothing
+     * is ever deleted: a file the payload does not name is not Legerix's, it is
+     * never loaded, and in {@code tessdata} it is a language a consumer added.
      */
-    private static void claim(final Path dir) throws IOException {
-        final Path lock = dir.resolve(LOCK_FILE);
-        lockChannel = FileChannel.open(lock, StandardOpenOption.CREATE, StandardOpenOption.WRITE);
-        ownLock = lockChannel.lock();
+    static void syncDirectory(final Payload payload, final String resourceDir, final List<String> names,
+                              final Path dir) throws IOException {
+        Files.createDirectories(dir);
+        final Path checksums = dir.resolve(CHECKSUMS_FILE);
+        final Map<String, String> recorded = readChecksums(checksums);
+        final Map<String, String> current = new LinkedHashMap<>();
+        for (final String name : names) {
+            final String resource = resourceDir + "/" + name;
+            final String stamp = payload.stamp(resource);
+            final Path file = dir.resolve(name);
+            if (!stamp.equals(recorded.get(name)) || !Files.isRegularFile(file) || Files.size(file) != sizeOf(stamp)) {
+                payload.extract(resource, file);
+            }
+            current.put(name, stamp);
+        }
+        writeChecksums(checksums, current);
     }
 
-    /**
-     * Deletes extraction directories of this same Legerix version that no
-     * live JVM holds. A directory whose lock cannot be taken belongs to a
-     * running JVM and is left untouched; a deletion that fails, the normal
-     * case on Windows where a loaded DLL stays mapped, is skipped silently
-     * and retried by a later run. Best effort by design: what matters here
-     * is never removing what someone may still be using, not always freeing
-     * the disk.
-     */
-    private static void reapAbandonedExtractions(final Path versionRoot, final Path keep) {
-        final List<Path> candidates = new ArrayList<>();
-        try (java.util.stream.Stream<Path> stream = Files.list(versionRoot)) {
-            for (final java.util.Iterator<Path> it = stream.iterator(); it.hasNext(); ) {
-                final Path dir = it.next();
-                if (Files.isDirectory(dir) && !dir.equals(keep) && Files.exists(dir.resolve(LOCK_FILE))) {
-                    candidates.add(dir);
-                }
-            }
-        } catch (final IOException e) {
-            logger.log(Level.FINE, "Legerix: cannot list {0} to reap old extractions", versionRoot);
-            return;
-        }
-        for (final Path dir : candidates) {
-            boolean abandoned = false;
-            try (FileChannel ch = FileChannel.open(dir.resolve(LOCK_FILE), StandardOpenOption.WRITE)) {
-                final FileLock probe = ch.tryLock();
-                if (probe != null) {
-                    probe.release();
-                    abandoned = true;
-                }
-            } catch (final IOException | RuntimeException e) {
-                continue;
-            }
-            if (abandoned) {
-                deleteQuietly(dir);
-            }
-        }
+    private static long sizeOf(final String stamp) {
+        return Long.parseLong(stamp.substring(0, stamp.indexOf(':')));
     }
 
-    private static void deleteQuietly(final Path dir) {
+    private static Map<String, String> readChecksums(final Path file) {
+        final Map<String, String> map = new LinkedHashMap<>();
+        if (!Files.isRegularFile(file)) {
+            return map;
+        }
         try {
-            Files.walkFileTree(dir, new SimpleFileVisitor<Path>() {
-                @Override
-                public FileVisitResult visitFile(final Path file, final BasicFileAttributes attrs) {
-                    try {
-                        Files.deleteIfExists(file);
-                    } catch (final IOException ignored) {
-                        // Locked native on Windows: leave it, a later run retries.
-                    }
-                    return FileVisitResult.CONTINUE;
+            for (final String line : Files.readAllLines(file, StandardCharsets.UTF_8)) {
+                final int tab = line.indexOf('\t');
+                if (tab > 0) {
+                    map.put(line.substring(0, tab), line.substring(tab + 1));
                 }
-
-                @Override
-                public FileVisitResult postVisitDirectory(final Path d, final IOException exc) {
-                    try {
-                        Files.deleteIfExists(d);
-                    } catch (final IOException ignored) {
-                        // Not empty because a file above could not be deleted.
-                    }
-                    return FileVisitResult.CONTINUE;
-                }
-            });
+            }
         } catch (final IOException e) {
-            logger.log(Level.FINE, "Legerix: could not reap {0}", dir);
+            logger.log(Level.FINE, "Legerix: cannot read {0}, the directory is extracted again", file);
+            map.clear();
+        }
+        return map;
+    }
+
+    private static void writeChecksums(final Path file, final Map<String, String> map) throws IOException {
+        final StringBuilder lines = new StringBuilder();
+        for (final Map.Entry<String, String> e : map.entrySet()) {
+            lines.append(e.getKey()).append('\t').append(e.getValue()).append('\n');
+        }
+        final Path part = Files.createTempFile(file.getParent(), CHECKSUMS_FILE, ".part");
+        try {
+            Files.write(part, lines.toString().getBytes(StandardCharsets.UTF_8));
+            Files.move(part, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        } catch (final IOException e) {
+            Files.deleteIfExists(part);
+            throw e;
         }
     }
 
