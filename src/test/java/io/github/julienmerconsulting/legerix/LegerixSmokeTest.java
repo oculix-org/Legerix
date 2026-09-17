@@ -169,7 +169,7 @@ public class LegerixSmokeTest {
     /**
      * The extraction directory is stable: {@code <cache>/<version>/<tier>},
      * the same from one run to the next, with the checksums Legerix verified
-     * its files against and tessdata inside it.
+     * its files against, and {@code tessdata} beside it under the version.
      */
     @Test
     public void extractionDirectoryIsStableAndVerified() throws Exception {
@@ -180,7 +180,8 @@ public class LegerixSmokeTest {
                 dir.getFileName().toString().matches("(darwin(-aarch64)?|linux-(x86-64|aarch64)(-legacy)?|win32-x86-64)"));
         assertTrue("it records what was verified",
                 java.nio.file.Files.isRegularFile(dir.resolve(Legerix.CHECKSUMS_FILE)));
-        assertEquals("tessdata is extracted inside it", dir, Legerix.getTessdataPath().getParent());
+        assertEquals("tessdata sits beside it, under the version", dir.getParent(), Legerix.getTessdataPath().getParent());
+        assertEquals("tessdata", Legerix.getTessdataPath().getFileName().toString());
         assertTrue("tessdata records what was verified too",
                 java.nio.file.Files.isRegularFile(Legerix.getTessdataPath().resolve(Legerix.CHECKSUMS_FILE)));
         assertSame("a second call is the same directory", dir, Legerix.loadNatives());
