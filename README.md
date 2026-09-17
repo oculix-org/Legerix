@@ -66,13 +66,16 @@ them, and Legerix reads nothing through the class loader:
   an entry twice: `loadNatives()` fails, before loading anything, saying which
   file and which jar. There is no fallback to the old generic paths and no
   reuse of an existing cache to make up for a broken payload.
-* **a private extraction per run.** Each `loadNatives()` extracts the whole
-  declared set into a fresh directory of its own under
-  `<cache>/<legerix version>/`, claimed by a lock file for the life of the
-  JVM. Two consumers of the same version never share one, and a directory is
-  never completed with files from another run. Directories no live JVM holds
-  are reaped by a later run, best effort: a native still mapped on Windows is
-  left for next time.
+* **a verified extraction.** `loadNatives()` works in
+  `<cache>/<legerix version>/<tier>/`, the same directory from one run to the
+  next; two applications on two Legerix versions never touch each other's
+  files. Every declared file is checked against the payload, size and CRC-32
+  read from the jar's index, before it is reused, and extracted again
+  otherwise, through a temporary file moved into place atomically. A start
+  where nothing changed writes nothing. Nothing is ever deleted: a file the
+  payload does not name is never loaded, and a `*.traineddata` dropped into
+  `tessdata/` stays there. A lock is held only while the directory is brought
+  up to date, so a second JVM waits and then finds everything in place.
 * **its own identity.** The version comes from `legerix.properties` in the
   payload, not from the jar manifest, which belongs to the consumer once
   Legerix is shaded.
