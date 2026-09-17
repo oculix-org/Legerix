@@ -243,9 +243,12 @@ public final class Legerix {
 
             final List<String> files = declaredNatives(payload, tierDir, os);
 
-            // One directory per version and tier, verified file by file against
-            // this payload before anything in it is reused (see syncDirectory).
-            final Path target = cacheDir().resolve(legerixVersion).resolve(resourceDirFor(os, arch, tier));
+            // <cache>/<version>/<tier>/ for the natives and <cache>/<version>/tessdata/
+            // for the models, verified file by file against this payload before
+            // anything in them is reused (see syncDirectory).
+            final Path versionRoot = cacheDir().resolve(legerixVersion);
+            final Path target = versionRoot.resolve(resourceDirFor(os, arch, tier));
+            final Path tessdata = versionRoot.resolve("tessdata");
             Files.createDirectories(target);
             final List<String> models = new ArrayList<>();
             for (final String lang : BUNDLED_LANGUAGES) {
@@ -255,9 +258,9 @@ public final class Legerix {
                     StandardOpenOption.CREATE, StandardOpenOption.WRITE);
                  FileLock held = channel.lock()) {
                 syncDirectory(payload, tierDir, files, target);
-                syncDirectory(payload, TESSDATA_ROOT, models, target.resolve("tessdata"));
+                syncDirectory(payload, TESSDATA_ROOT, models, tessdata);
             }
-            tessdataDir = target.resolve("tessdata");
+            tessdataDir = tessdata;
             extractionDir = target;
         }
 
