@@ -13,6 +13,7 @@ import java.awt.image.BufferedImage;
 import java.nio.file.Path;
 import java.util.EnumSet;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertSame;
@@ -166,20 +167,61 @@ public class LegerixSmokeTest {
     }
 
     /**
-     * The extraction directory is private to this loader run: it lives under
-     * the Legerix version, holds the lock file that keeps another JVM from
-     * reaping it, and is not the version root itself, so two consumers of the
-     * same version never share one.
+     * The extraction directory is stable: {@code <cache>/<version>/<tier>},
+     * the same from one run to the next, with the checksums Legerix verified
+     * its files against and tessdata inside it.
      */
     @Test
-    public void extractionDirectoryIsPrivateAndClaimed() throws Exception {
+    public void extractionDirectoryIsStableAndVerified() throws Exception {
         final Path dir = Legerix.loadNatives();
-        assertTrue(dir + " should hold the lock", java.nio.file.Files.exists(dir.resolve(".legerix-lock")));
         assertEquals("it lives under the Legerix version",
                 Legerix.getLegerixVersion(), dir.getParent().getFileName().toString());
-        assertTrue("it is a private directory of this run, not the version root",
-                dir.getFileName().toString().length() > "linux-x86-64".length());
+        assertTrue("it is the tier directory itself: " + dir.getFileName(),
+                dir.getFileName().toString().matches("(darwin(-aarch64)?|linux-(x86-64|aarch64)(-legacy)?|win32-x86-64)"));
+        assertTrue("it records what was verified",
+                java.nio.file.Files.isRegularFile(dir.resolve(Legerix.CHECKSUMS_FILE)));
         assertEquals("tessdata is extracted inside it", dir, Legerix.getTessdataPath().getParent());
+        assertTrue("tessdata records what was verified too",
+                java.nio.file.Files.isRegularFile(Legerix.getTessdataPath().resolve(Legerix.CHECKSUMS_FILE)));
+        assertSame("a second call is the same directory", dir, Legerix.loadNatives());
+    }
+
+    /**
+     * A cache directory is verified, not rewritten: a file whose size and
+     * CRC-32 still match the payload is left untouched, a file the payload
+     * changed or that differs on disk is extracted again, and a file the
+     * payload does not name, a language model a consumer dropped in, survives.
+     */
+    @Test
+    public void aCacheDirectoryIsVerifiedNotRewritten() throws Exception {
+        final String tierDir = "META-INF/legerix/natives/linux-x86-64";
+        final Path root = payloadWith("linux-x86-64", "libleptonica.so.6\nlibtesseract.so.5\n",
+                "libleptonica.so.6", "libtesseract.so.5");
+        final Legerix.Payload payload = Legerix.Payload.ofDirectory(root);
+        final java.util.List<String> names = java.util.Arrays.asList("libleptonica.so.6", "libtesseract.so.5");
+        final Path cache = java.nio.file.Files.createTempDirectory("legerix-cache-");
+        final Path leptonica = cache.resolve("libleptonica.so.6");
+
+        Legerix.syncDirectory(payload, tierDir, names, cache);
+        assertArrayEquals(new byte[]{1, 2, 3}, java.nio.file.Files.readAllBytes(leptonica));
+
+        final java.nio.file.attribute.FileTime epoch = java.nio.file.attribute.FileTime.fromMillis(0);
+        java.nio.file.Files.setLastModifiedTime(leptonica, epoch);
+        java.nio.file.Files.write(cache.resolve("deu.traineddata"), new byte[]{7});
+        Legerix.syncDirectory(payload, tierDir, names, cache);
+        assertEquals("an unchanged file is not rewritten", epoch, java.nio.file.Files.getLastModifiedTime(leptonica));
+        assertTrue("a file the payload does not name survives",
+                java.nio.file.Files.exists(cache.resolve("deu.traineddata")));
+
+        java.nio.file.Files.write(root.resolve(tierDir).resolve("libleptonica.so.6"), new byte[]{4, 5, 6, 7});
+        Legerix.syncDirectory(payload, tierDir, names, cache);
+        assertArrayEquals("a changed payload entry is extracted again",
+                new byte[]{4, 5, 6, 7}, java.nio.file.Files.readAllBytes(leptonica));
+
+        java.nio.file.Files.write(leptonica, new byte[]{0});
+        Legerix.syncDirectory(payload, tierDir, names, cache);
+        assertArrayEquals("a file that differs on disk is extracted again",
+                new byte[]{4, 5, 6, 7}, java.nio.file.Files.readAllBytes(leptonica));
     }
 
     /**
