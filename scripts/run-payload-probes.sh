@@ -13,7 +13,8 @@
 #      without Legerix's own identity is refused before anything loads —
 #      with a valid cache from step 1 still on disk, so the cache is proven
 #      not to be a fallback;
-#   4. the extraction directory is private to the run and claimed;
+#   4. the extraction directory is the stable tier directory, claimed by a
+#      lock, with checksums recording every file it holds;
 #   5. a second call reuses it and extracts nothing again.
 #
 # Usage: bash ./scripts/run-payload-probes.sh [tier]
