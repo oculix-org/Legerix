@@ -22,7 +22,8 @@ import java.util.stream.Stream;
  * JAR-mode probe for Legerix#21, run against a packaged Legerix jar. It
  * exercises what no test running from {@code target/classes} can: the jar is
  * the code source, the payload is read from it entry by entry, and the
- * extraction lands in a private directory.
+ * extraction lands in the stable tier directory of the cache, verified
+ * against that payload.
  *
  * <pre>
  *   java -cp "legerix.jar:jna.jar" scripts/JarModeProbe.java
@@ -32,14 +33,17 @@ import java.util.stream.Stream;
  * Checks, in order:
  * <ol>
  *   <li>the extraction directory holds exactly what the tier manifest of the
- *       code source declares, plus the lock file and tessdata: a foreign
- *       native under a generic top-level directory of the same jar never
- *       reaches it;</li>
+ *       code source declares, plus the lock file and the checksums file: a
+ *       foreign native under a generic top-level directory of the same jar
+ *       never reaches it;</li>
  *   <li>every extracted byte comes from the code source, not from whatever
  *       the class loader would have answered — printed and compared, so a
  *       decoy jar placed first on the class path is proven not to win;</li>
- *   <li>the directory is private to this run and claimed by a lock;</li>
- *   <li>the five bundled languages are there;</li>
+ *   <li>the directory is the stable tier directory under the Legerix
+ *       version, claimed by a lock, and its checksums record every file of
+ *       the manifest;</li>
+ *   <li>the five bundled languages are in tessdata, beside the tier
+ *       directory under the same version;</li>
  *   <li>a second call returns the same directory and extracts nothing new.</li>
  * </ol>
  * Exit 0 when all hold, 1 otherwise.
@@ -47,6 +51,8 @@ import java.util.stream.Stream;
 public class JarModeProbe {
 
     private static final List<String> problems = new ArrayList<>();
+    private static final String LOCK_FILE = ".legerix-lock";
+    private static final String CHECKSUMS_FILE = "legerix-checksums.txt";
 
     private static void check(final boolean ok, final String what) {
         System.out.println((ok ? "  ok   " : "  FAIL ") + what);
@@ -59,7 +65,7 @@ public class JarModeProbe {
         System.out.println("code source    : " + codeSource);
 
         final Path dir = Legerix.loadNatives();
-        final String tier = dir.getFileName().toString().replaceAll("-\\d+$", "");
+        final String tier = dir.getFileName().toString();
         System.out.println("legerix version: " + Legerix.getLegerixVersion());
         System.out.println("tesseract      : " + Legerix.getTesseractVersion()
                 + "  " + Legerix.getTesseractLibraryPath());
@@ -70,8 +76,17 @@ public class JarModeProbe {
         final TreeSet<String> manifest = new TreeSet<>();
         final TreeSet<String> extracted;
         try (JarFile jar = new JarFile(codeSource.toFile())) {
+            final JarEntry manifestEntry = jar.getJarEntry(tierDir + "/legerix-natives.txt");
+            // The extraction directory is named after a tier of the payload,
+            // with no per-run suffix: that is what makes it the stable cache
+            // directory, and it is also what finds the manifest below.
+            check(manifestEntry != null, "the extraction directory is named after a payload tier: " + tierDir);
+            if (manifestEntry == null) {
+                System.out.println("FAIL: no tier manifest to compare against, nothing else can be checked");
+                System.exit(1);
+            }
             try (BufferedReader r = new BufferedReader(new InputStreamReader(
-                    jar.getInputStream(jar.getJarEntry(tierDir + "/legerix-natives.txt")), StandardCharsets.UTF_8))) {
+                    jar.getInputStream(manifestEntry), StandardCharsets.UTF_8))) {
                 String line;
                 while ((line = r.readLine()) != null) {
                     line = line.trim();
@@ -82,7 +97,7 @@ public class JarModeProbe {
             try (Stream<Path> s = Files.list(dir)) {
                 extracted = s.filter(Files::isRegularFile)
                         .map(p -> p.getFileName().toString())
-                        .filter(n -> !n.equals(".legerix-lock"))
+                        .filter(n -> !n.equals(LOCK_FILE) && !n.equals(CHECKSUMS_FILE))
                         .collect(Collectors.toCollection(TreeSet::new));
             }
 
@@ -133,30 +148,39 @@ public class JarModeProbe {
             check(!leaked, "no native from outside META-INF/legerix/ reached the cache");
         }
 
-        check(Files.exists(dir.resolve(".legerix-lock")), "the extraction directory is claimed by a lock");
+        check(Files.exists(dir.resolve(LOCK_FILE)), "the extraction directory is claimed by a lock");
         check(dir.getParent().getFileName().toString().equals(Legerix.getLegerixVersion()),
                 "it lives under the Legerix version of the code source");
-        check(!dir.getFileName().toString().equals(tier),
-                "it is private to this run, not the shared tier directory");
+        final TreeSet<String> recorded = new TreeSet<>();
+        final Path checksums = dir.resolve(CHECKSUMS_FILE);
+        if (Files.isRegularFile(checksums)) {
+            for (final String line : Files.readAllLines(checksums, StandardCharsets.UTF_8)) {
+                final int tab = line.indexOf('\t');
+                if (tab > 0) recorded.add(line.substring(0, tab));
+            }
+        }
+        System.out.println("checksums (" + recorded.size() + ") : " + recorded);
+        check(recorded.equals(manifest), "its checksums record exactly the files of the manifest");
 
         final Path tessdata = Legerix.getTessdataPath();
-        boolean languages = tessdata.getParent().equals(dir);
+        boolean languages = tessdata.getParent().equals(dir.getParent())
+                && tessdata.getFileName().toString().equals("tessdata");
         for (final String lang : Legerix.BUNDLED_LANGUAGES) {
             if (!Files.isRegularFile(tessdata.resolve(lang + ".traineddata"))) {
                 languages = false;
                 System.out.println("       missing language: " + lang);
             }
         }
-        check(languages, "the five bundled languages are extracted inside it");
+        check(languages, "the five bundled languages are in tessdata, beside it under the same version");
 
         final long before = Files.getLastModifiedTime(Legerix.getTesseractLibraryPath()).toMillis();
         final Path second = Legerix.loadNatives();
         check(second.equals(dir) && Files.getLastModifiedTime(Legerix.getTesseractLibraryPath()).toMillis() == before,
                 "a second call returns the same directory and extracts nothing again");
 
-        // --hold <seconds>: keep the JVM, and therefore the lock, alive so a
-        // second JVM can be started against the same Legerix version and
-        // shown to get its own directory while this one survives untouched.
+        // --hold <seconds>: keep this JVM, with the natives it loaded, alive so
+        // a second JVM can be started against the same Legerix version and
+        // shown to reuse the same verified directory without disturbing it.
         final int hold = Arrays.asList(args).indexOf("--hold");
         if (hold >= 0 && hold + 1 < args.length) {
             System.out.println("holding " + dir + " for " + args[hold + 1] + "s");
@@ -165,7 +189,7 @@ public class JarModeProbe {
         }
 
         if (problems.isEmpty()) {
-            System.out.println("OK: payload isolated, read from one source, extracted whole into a private directory");
+            System.out.println("OK: payload isolated, read from one source, extracted whole into the verified tier directory");
             return;
         }
         System.out.println("FAIL: " + problems.size() + " check(s) failed");
