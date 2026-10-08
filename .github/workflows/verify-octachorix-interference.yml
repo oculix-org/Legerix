@@ -256,7 +256,7 @@ jobs:
           distribution: 'temurin'
 
       - name: Natives built by this run (${{ matrix.artifact }})
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: ${{ matrix.artifact }}
           path: natives
@@ -318,7 +318,7 @@ jobs:
           distribution: 'temurin'
 
       - name: Stage the fresh linux-x86-64 natives
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: fresh-linux-x86-64
           path: src/main/resources/linux-x86-64
