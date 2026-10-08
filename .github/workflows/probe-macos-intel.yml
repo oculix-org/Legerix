@@ -119,7 +119,7 @@ jobs:
           done
           echo "OK: Intel tier is x86_64"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: darwin-intel-probe
           path: out/

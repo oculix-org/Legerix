@@ -81,7 +81,7 @@ jobs:
           cp -L "$LIB_DIR"/libsharpyuv.so.* out/ 2>/dev/null || true
           ls -la out/
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: linux-x86-64
           path: out/
@@ -147,7 +147,7 @@ jobs:
             fi
           done
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: linux-x86-64-legacy
           path: out/
@@ -214,7 +214,7 @@ jobs:
           cp -L "$LIB_DIR"/libsharpyuv.so.* out/ 2>/dev/null || true
           ls -la out/
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: linux-aarch64
           path: out/
@@ -289,7 +289,7 @@ jobs:
             fi
           done
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: linux-aarch64-legacy
           path: out/
@@ -399,7 +399,7 @@ jobs:
           cp -L "$BREW_PREFIX"/lib/libsharpyuv.*.dylib   out/ 2>/dev/null || true
           ls -la out/
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: darwin
           path: out/
@@ -499,7 +499,7 @@ jobs:
           cp -L "$BREW_PREFIX"/lib/libsharpyuv.*.dylib   out/ 2>/dev/null || true
           ls -la out/
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: darwin-aarch64
           path: out/
@@ -557,7 +557,7 @@ jobs:
           cp "$VCPKG_BIN"/*.dll out/
           ls -la out/
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: win32-x86-64
           path: out/
@@ -713,7 +713,7 @@ jobs:
           rm -rf ~/.cache/legerix/$(mvn -B -q help:evaluate -Dexpression=project.version -DforceStdout)
           java -cp "target/legerix-shaded-probe.jar:$JNA" scripts/JarModeProbe.java
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: dist
           path: target/legerix*

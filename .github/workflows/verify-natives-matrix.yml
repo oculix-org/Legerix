@@ -145,7 +145,7 @@ jobs:
       # les .so réellement mappés au moment du SIGSEGV.
       - name: Upload surefire reports on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: surefire-${{ matrix.os }}-${{ matrix.system_tesseract }}
           path: |
