@@ -26,6 +26,11 @@ jobs:
           gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
           gpg-passphrase: GPG_PASSPHRASE
 
+      - name: Use Maven 3.9.16 (the runner's 3.10.0 puts local-repo files in the Central bundle)
+        run: |
+          curl -fsSL https://archive.apache.org/dist/maven/maven-3/3.9.16/binaries/apache-maven-3.9.16-bin.tar.gz | tar xz -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/apache-maven-3.9.16/bin" >> "$GITHUB_PATH"
+
       - name: Resolve release tag from pom version
         run: |
           VERSION=$(mvn -B -q help:evaluate -Dexpression=project.version -DforceStdout)
